@@ -1,0 +1,8 @@
+[package]
+name = "crushmero/extended-tween-service"
+version = "0.1.3"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+
+[dependencies]
+ExtendedRunService = "crushmero/extended-run-service@0.1.2"

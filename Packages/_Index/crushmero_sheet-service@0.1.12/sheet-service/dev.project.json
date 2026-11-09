@@ -1,0 +1,14 @@
+{
+	"name": "SheetService",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedStorage": {
+			"Packages": {
+				"$path": "Packages",
+				"SheetService": {
+					"$path": "src"
+				}
+			}
+		}
+	}
+}

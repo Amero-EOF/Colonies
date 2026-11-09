@@ -1,0 +1,7 @@
+[package]
+name = "crushmero/trove"
+version = "0.1.1"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+
+[dependencies]

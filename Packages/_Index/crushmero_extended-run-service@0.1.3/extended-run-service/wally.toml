@@ -1,0 +1,8 @@
+[package]
+name = "crushmero/extended-run-service"
+version = "0.1.3"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+
+[dependencies]
+Signal = "sleitnick/signal@2.0.3"

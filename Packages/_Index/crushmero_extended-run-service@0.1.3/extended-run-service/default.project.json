@@ -1,0 +1,6 @@
+{
+  "name": "extended-run-service",
+  "tree": {
+    "$path": "src"
+  }
+}

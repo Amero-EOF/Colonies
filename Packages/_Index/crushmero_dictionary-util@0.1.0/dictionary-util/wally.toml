@@ -1,0 +1,7 @@
+[package]
+name = "crushmero/dictionary-util"
+version = "0.1.0"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+exclude = ["**"]
+include = ["src", "src/*", "default.project.json", "wally.toml", "LICENSE"]

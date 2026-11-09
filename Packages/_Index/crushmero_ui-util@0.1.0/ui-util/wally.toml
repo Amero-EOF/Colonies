@@ -1,0 +1,10 @@
+[package]
+name = "crushmero/ui-util"
+version = "0.1.0"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+exclude = ["**"]
+include = ["src", "src/*", "default.project.json", "wally.toml", "LICENSE"]
+
+[dependencies]
+ExtendedTweenService = "crushmero/extended-tween-service@0.1.2"

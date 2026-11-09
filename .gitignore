@@ -1,0 +1,7 @@
+Sandbox.code-workspace
+.cursorignore
+stylua.toml
+sourcemap.json
+wally.lock
+Packages/
+ServerPackages/

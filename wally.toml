@@ -1,0 +1,30 @@
+[package]
+name = "crushmero/colonies"
+version = "0.1.0"
+registry = "https://github.com/Amero-EOF/wally-index"
+realm = "shared"
+
+[dependencies]
+Signal = "crushmero/signal@0.1.0"
+DictionaryUtil = "crushmero/dictionary-util@0.1.0"
+ExtendedRunService = "crushmero/extended-run-service@0.1.3"
+ExtendedTweenService = "crushmero/extended-tween-service@0.1.3"
+NamedSignals = "crushmero/named-signals@0.1.0"
+PartCache = "crushmero/part-cache@0.1.0"
+Promise = "crushmero/promise@0.1.0"
+SheetService = "crushmero/sheet-service@0.1.12"
+Trove = "crushmero/trove@0.1.1"
+UIController = "crushmero/ui-controller@0.1.0"
+ValueToInstance = "crushmero/value-to-instance@0.1.0"
+ViewportModel = "crushmero/viewport-model@0.1.0"
+SmartBone = "jakeywastaken/smartbone-2@0.5.2"
+Net = "sleitnick/net@0.2.0"
+UIUtil = "crushmero/ui-util@0.1.0"
+TableUtil = "crushmero/table-util@0.1.1"
+CharacterUtil = "crushmero/character-util@0.1.0"
+FXUtil = "crushmero/fx-util@0.1.0"
+Decorator = "crushmero/decorator@0.1.4"
+quickzone = "ldgerrits/quickzone@1.4.7"
+
+[server-dependencies]
+profilestore = "lm-loleris/profilestore@1.0.0"
