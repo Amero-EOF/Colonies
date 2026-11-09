@@ -25,6 +25,7 @@ CharacterUtil = "crushmero/character-util@0.1.0"
 FXUtil = "crushmero/fx-util@0.1.0"
 Decorator = "crushmero/decorator@0.1.4"
 quickzone = "ldgerrits/quickzone@1.4.7"
+vide = "centau/vide@0.4.1"
 
 [server-dependencies]
 profilestore = "lm-loleris/profilestore@1.0.0"
