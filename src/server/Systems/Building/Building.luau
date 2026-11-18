@@ -20,14 +20,14 @@ export type BuildingObject = {
 
 const Building = {}
 
-function Building.new(id: BuildingId): BuildingObject
+function Building.new(id: BuildingId, level: number): BuildingObject
 	local info = BuildingData[id]
 	assert(info, `Unknown building id: {id}`)
 
 	return {
 		Id = id,
 		Info = info,
-		Level = 0,
+		Level = level,
 	}
 end
 

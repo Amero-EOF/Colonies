@@ -45,6 +45,7 @@ export type BuildingId =
 	| "ShepherdHut"
 	| "SifterHut"
 	| "Smeltery"
+	| "Spire"
 	| "Stable"
 	| "StonemasonHut"
 	| "SwineherdHut"
@@ -58,15 +59,44 @@ export type WorkplaceComponent = {
 	Jobs: { string },
 }
 
+-- Players can deposit carried resources here
+export type StorageComponent = {}
+
+-- Teleports its owner to the wilds
+export type TeleporterComponent = {}
+
+-- Colonists can live here; beds = Capacity + CapacityPerLevel * level
+export type HousingComponent = {
+	Capacity: number,
+	CapacityPerLevel: number?,
+}
+
+-- The building's own storage (e.g. Builder's Hut materials); the player delivers into it
+export type WorkerStorageComponent = {
+	-- Bag item type from ItemsList (its size comes from BagSizes)
+	BagItem: string,
+}
+
+-- A crop field around the building (FarmData geometry: 6 wedges unlocked by level); its Farmer
+-- plants and harvests it. Only the hut in the middle blocks colonists, the field is walkable.
+export type FieldComponent = {}
+
 -- A building is composed of the components it has; absent components are nil
 export type BuildingComponents = {
 	Workplace: WorkplaceComponent?,
+	Storage: StorageComponent?,
+	Teleporter: TeleporterComponent?,
+	Housing: HousingComponent?,
+	WorkerStorage: WorkerStorageComponent?,
+	Field: FieldComponent?,
 }
 
 export type BuildingInfo = {
 	Id: BuildingId,
 	Name: string,
 	Description: string,
+	-- Town Hall level required before this building can be built
+	UnlockLevel: number,
 	Components: BuildingComponents,
 }
 

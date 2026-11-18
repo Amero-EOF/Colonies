@@ -26,6 +26,8 @@ FXUtil = "crushmero/fx-util@0.1.0"
 Decorator = "crushmero/decorator@0.1.4"
 quickzone = "ldgerrits/quickzone@1.4.7"
 vide = "centau/vide@0.4.1"
+crunchyroll = "ffrostfall/crunchyroll@0.2.0"
 
 [server-dependencies]
 profilestore = "lm-loleris/profilestore@1.0.0"
+cmdr = "evaera/cmdr@1.13.1"

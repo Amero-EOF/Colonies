@@ -1,0 +1,465 @@
+--!strict
+
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
+
+const Packages = ReplicatedStorage.Packages
+const Shared = ReplicatedStorage.Shared
+
+const vide = require(Packages.vide)
+const BuildingBlueprint = require(Shared.Buildings.BuildingBlueprint)
+const BuildingData = require(Shared.Buildings.BuildingData)
+const BuildingModels = require(Shared.Buildings.BuildingModels)
+const BuildingPlacement = require(Shared.Buildings.BuildingPlacement)
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
+const ColonyTypes = require(Shared.Colony.ColonyTypes)
+const FarmData = require(Shared.Farm.FarmData)
+const MailboxData = require(Shared.Colony.MailboxData)
+const PlotData = require(Shared.Plot.PlotData)
+const ColonyStore = require(script.Parent.ColonyStore)
+
+const effect = vide.effect
+const source = vide.source
+
+type SavedBuilding = ColonyTypes.SavedBuilding
+
+const PLOT_COLOR = Color3.fromRGB(86, 150, 60)
+-- Studs past a building's footprint its prompts reach
+const PROMPT_REACH = 16
+-- Prompts sit near the base so tall buildings keep them on screen
+const PROMPT_HEIGHT = 4
+-- Studs between the Town Hall's two prompts and its centre
+const SIDE_OFFSET = 6
+const HIDE_CHECK_INTERVAL = 0.25
+-- Unbuilt parts of a construction site
+const GHOST_TRANSPARENCY = 0.85
+-- Placeholder mailbox colours
+const MAILBOX_POST_COLOR = Color3.fromRGB(110, 75, 45)
+const MAILBOX_BOX_COLOR = Color3.fromRGB(60, 90, 140)
+const MAILBOX_SLOT_COLOR = Color3.fromRGB(25, 25, 30)
+const MAILBOX_FLAG_COLOR = Color3.fromRGB(200, 50, 50)
+-- Flag on the placeholder's right side, relative to its base: raised while mail is unread
+const MAILBOX_FLAG_UP = CFrame.new(0.88, 5.1, 0.6)
+const MAILBOX_FLAG_DOWN = CFrame.new(0.88, 4.1, 0.6) * CFrame.Angles(math.pi / 2, 0, 0)
+
+const player = Players.LocalPlayer
+
+-- Draws the local player's plot and buildings; nobody else sees them
+const ColonyView = {}
+
+local started = false
+
+-- Construction sites' parts in build order (bottom-up), by building id
+const sites: { [string]: { BasePart } } = {}
+
+-- The Town Hall mailbox drawn last (its prompt's text and flag follow unread mail)
+local mailboxPrompt: ProximityPrompt? = nil
+local mailboxFlag: BasePart? = nil
+local mailboxPivot = CFrame.new()
+
+local function openStorage(target: string?): (boolean) -> ()
+	return function(open: boolean)
+		if open then
+			ColonyStore.StorageTarget(target)
+			ColonyStore.StorageOpen(true)
+		elseif ColonyStore.StorageTarget() == target then
+			ColonyStore.StorageOpen(false)
+		end
+	end
+end
+
+-- Shows the parts a Builder has placed; the rest stay see-through
+local function updateSites()
+	local progress: { [string]: number } = {}
+	for _, order in ColonyStore.WorkOrders() do
+		progress[order.BuildingId] = order.Progress
+	end
+	for id, parts in sites do
+		local placed = progress[id] or 0
+		for index, part in parts do
+			local built = index <= placed
+			part.Transparency = if built then 0 else GHOST_TRANSPARENCY
+			part.CanCollide = built
+		end
+	end
+end
+
+-- Prompt that opens a menu, which closes again when the player walks away
+-- `side` shifts the prompt along the building's X so two prompts don't overlap
+local function addPrompt(
+	model: Model,
+	saved: SavedBuilding,
+	actionText: string,
+	menuOpen: (boolean) -> (),
+	key: Enum.KeyCode,
+	side: number
+)
+	local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not part then
+		return
+	end
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = `{actionText}PromptAttachment`
+	attachment.Parent = part
+	attachment.WorldPosition = (model:GetPivot() * CFrame.new(side, PROMPT_HEIGHT, 0)).Position
+
+	-- A crop field's prompts reach from its hut, not from the field's edge
+	local footprint = if BuildingData[saved.Id].Components.Field
+		then Vector2.new(FarmData.HUT_FOOTPRINT, FarmData.HUT_FOOTPRINT)
+		else BuildingModels.GetFootprint(saved.Id, saved.Level)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = `{actionText}Prompt`
+	prompt.ActionText = actionText
+	prompt.ObjectText = BuildingData[saved.Id].Name
+	prompt.HoldDuration = 0
+	prompt.KeyboardKeyCode = key
+	prompt.RequiresLineOfSight = false
+	prompt.MaxActivationDistance = math.max(footprint.X, footprint.Y) / 2 + PROMPT_REACH
+	prompt.Parent = attachment
+
+	prompt.Triggered:Connect(function()
+		menuOpen(true)
+	end)
+	prompt.PromptHidden:Connect(function()
+		-- Rebuilding the model (e.g. after an upgrade) also hides the prompt; only close when walking away
+		task.defer(function()
+			if prompt.Parent then
+				menuOpen(false)
+			end
+		end)
+	end)
+end
+
+local function makeMailboxPart(
+	model: Model,
+	name: string,
+	size: Vector3,
+	color: Color3,
+	cframe: CFrame,
+	shape: Enum.PartType?
+): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.Color = color
+	part.CFrame = cframe
+	part.Anchored = true
+	part.CanTouch = false
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	if shape then
+		part.Shape = shape
+	end
+	part.Parent = model
+	return part
+end
+
+-- Placeholder mailbox: a post, a box with a rounded lid, a slot on the front and a flag.
+-- Built around its base at the origin with the slot facing -Z. Returns the model and its flag.
+local function createPlaceholderMailbox(): (Model, BasePart)
+	local model = Instance.new("Model")
+	model.Name = "Mailbox"
+	makeMailboxPart(
+		model,
+		"Post",
+		Vector3.new(0.6, 3.4, 0.6),
+		MAILBOX_POST_COLOR,
+		CFrame.new(0, 1.7, 0)
+	)
+	makeMailboxPart(
+		model,
+		"Box",
+		Vector3.new(1.6, 1.4, 2.4),
+		MAILBOX_BOX_COLOR,
+		CFrame.new(0, 4.1, 0)
+	)
+	makeMailboxPart(
+		model,
+		"Lid",
+		Vector3.new(2.4, 1.6, 1.6),
+		MAILBOX_BOX_COLOR,
+		CFrame.new(0, 4.8, 0) * CFrame.Angles(0, math.pi / 2, 0),
+		Enum.PartType.Cylinder
+	)
+	makeMailboxPart(
+		model,
+		"Slot",
+		Vector3.new(1.1, 0.9, 0.1),
+		MAILBOX_SLOT_COLOR,
+		CFrame.new(0, 4.2, -1.22)
+	)
+	local flag = makeMailboxPart(
+		model,
+		"Flag",
+		Vector3.new(0.12, 1, 0.4),
+		MAILBOX_FLAG_COLOR,
+		MAILBOX_FLAG_DOWN
+	)
+	model.WorldPivot = CFrame.new()
+	return model, flag
+end
+
+-- Unread count on the prompt, and the placeholder's flag raised while there's unread mail
+local function updateMailbox()
+	local unread = 0
+	for _, mail in ColonyStore.Mail() do
+		if not mail.Read then
+			unread += 1
+		end
+	end
+	if mailboxPrompt then
+		mailboxPrompt.ObjectText = if unread > 0 then `Mailbox ({unread} new)` else "Mailbox"
+	end
+	if mailboxFlag then
+		mailboxFlag.CFrame = mailboxPivot
+			* (if unread > 0 then MAILBOX_FLAG_UP else MAILBOX_FLAG_DOWN)
+	end
+end
+
+-- The Town Hall mailbox, to the right of its entrance (MailboxData.GetCFrame, shared with the
+-- server's reach check). Everything hangs off "MailboxAttachment" on the Town Hall: to swap in
+-- a real model, add a Model named "MailboxModel" to ReplicatedStorage (pivot at its base, front
+-- facing -Z) and it's placed at the attachment instead of the placeholder. A Town Hall model
+-- that already has a "MailboxAttachment" keeps its authored spot (keep MailboxData's offsets
+-- close to it: the server checks reach against them). Lives inside the Town Hall model, so it
+-- follows it when it's moved or rebuilt.
+local function createMailbox(model: Model, saved: SavedBuilding)
+	local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not part then
+		return
+	end
+
+	local found = model:FindFirstChild("MailboxAttachment", true)
+	local attachment: Attachment
+	if found and found:IsA("Attachment") then
+		attachment = found
+	else
+		attachment = Instance.new("Attachment")
+		attachment.Name = "MailboxAttachment"
+		attachment.Parent = part
+		attachment.WorldCFrame = MailboxData.GetCFrame(
+			model:GetPivot(),
+			BuildingModels.GetFootprint(saved.Id, saved.Level)
+		)
+	end
+	mailboxPivot = attachment.WorldCFrame
+
+	local template = ReplicatedStorage:FindFirstChild("MailboxModel")
+	local mailbox: Model
+	if template and template:IsA("Model") then
+		mailbox = template:Clone()
+		mailbox.Name = "Mailbox"
+		mailboxFlag = nil
+	else
+		local flag
+		mailbox, flag = createPlaceholderMailbox()
+		mailboxFlag = flag
+	end
+	mailbox:PivotTo(mailboxPivot)
+	mailbox.Parent = model
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "MailboxPrompt"
+	prompt.ActionText = "Check mail"
+	prompt.ObjectText = "Mailbox"
+	prompt.HoldDuration = 0
+	-- G: E/F are the Town Hall's prompts and T the merchant's
+	prompt.KeyboardKeyCode = Enum.KeyCode.G
+	prompt.RequiresLineOfSight = false
+	prompt.MaxActivationDistance = MailboxData.REACH
+	prompt.Parent = attachment
+	mailboxPrompt = prompt
+
+	prompt.Triggered:Connect(function()
+		ColonyStore.MailboxOpen(true)
+	end)
+	prompt.PromptHidden:Connect(function()
+		-- Rebuilding the Town Hall also hides the prompt; only close when walking away
+		task.defer(function()
+			if prompt.Parent then
+				ColonyStore.MailboxOpen(false)
+			end
+		end)
+	end)
+
+	-- Called while the buildings effect runs; don't subscribe it to mail
+	vide.untrack(updateMailbox)
+end
+
+local function createBuilding(saved: SavedBuilding, folder: Folder)
+	local placement = saved.Placement
+	if not placement then
+		return
+	end
+
+	-- A construction site draws level 1 and reveals parts as they're built
+	local isSite = not BuildingUnlocks.IsBuilt(saved.Id, saved.Level)
+	local model = BuildingModels.Create(saved.Id, math.max(saved.Level, 1))
+	-- The model is drawn at level 1 or more, but the label shows the real level (the Town Hall starts at 0)
+	local billboard = model:FindFirstChild("Label", true)
+	local text = billboard and billboard:FindFirstChildWhichIsA("TextLabel")
+	if text then
+		local name = BuildingData[saved.Id].Name
+		text.Text = if isSite then `{name} (construction site)` else `{name} (Lv {saved.Level})`
+	end
+	if isSite then
+		sites[saved.Id] = BuildingBlueprint.GetOrderedParts(model)
+	end
+	model:SetAttribute("BuildingId", saved.Id)
+	model:SetAttribute("Level", saved.Level)
+	model:PivotTo(BuildingPlacement.ToCFrame(placement))
+	model.Parent = folder
+	ColonyStore.Models[saved.Id] = model
+
+	local components = BuildingData[saved.Id].Components
+	local isTownHall = saved.Id == "TownHall"
+	if isSite then
+		return
+	end
+	if components.WorkerStorage then
+		addPrompt(model, saved, "Storage", openStorage(saved.Id), Enum.KeyCode.F, -SIDE_OFFSET)
+	end
+	if components.Storage then
+		addPrompt(
+			model,
+			saved,
+			"Storage",
+			openStorage(nil),
+			Enum.KeyCode.E,
+			if components.Teleporter then 0 else -SIDE_OFFSET
+		)
+	end
+	if isTownHall then
+		addPrompt(model, saved, "Manage", ColonyStore.ManageOpen, Enum.KeyCode.F, SIDE_OFFSET)
+		createMailbox(model, saved)
+	elseif not components.Teleporter then
+		-- Upgrade and move panel; shares the building with a Storage prompt on F
+		local panelOpen = function(open: boolean)
+			if open then
+				ColonyStore.BuildingPanelId(saved.Id)
+			elseif ColonyStore.BuildingPanelId() == saved.Id then
+				ColonyStore.BuildingPanelId(nil)
+			end
+		end
+		local hasStorage = components.Storage ~= nil or components.WorkerStorage ~= nil
+		addPrompt(
+			model,
+			saved,
+			"Manage",
+			panelOpen,
+			if hasStorage then Enum.KeyCode.F else Enum.KeyCode.E,
+			if hasStorage then SIDE_OFFSET else 0
+		)
+	end
+	if components.Teleporter then
+		addPrompt(model, saved, "Teleport", ColonyStore.SpireMenuOpen, Enum.KeyCode.E, 0)
+	end
+end
+
+local function setHidden(character: Model, hidden: boolean)
+	local modifier = if hidden then 1 else 0
+	for _, descendant in character:GetDescendants() do
+		if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+			descendant.LocalTransparencyModifier = modifier
+		end
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.DisplayDistanceType = if hidden
+			then Enum.HumanoidDisplayDistanceType.None
+			else Enum.HumanoidDisplayDistanceType.Viewer
+	end
+end
+
+-- Other players standing on the shared plot spot are in their own colony, so hide them
+local function hideOthers()
+	local hidden: { [Model]: boolean } = {}
+	local elapsed = 0
+
+	RunService.Heartbeat:Connect(function(deltaTime)
+		elapsed += deltaTime
+		if elapsed < HIDE_CHECK_INTERVAL then
+			return
+		end
+		elapsed = 0
+
+		for _, other in Players:GetPlayers() do
+			local character = other.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			if other == player or not character or not root or not root:IsA("BasePart") then
+				continue
+			end
+
+			local inside = PlotData.IsInside(root.Position, BuildingUnlocks.MAX_LEVEL)
+			if (hidden[character] or false) ~= inside then
+				hidden[character] = inside
+				setHidden(character, inside)
+			end
+		end
+
+		for character in hidden do
+			if not character.Parent then
+				hidden[character] = nil
+			end
+		end
+	end)
+end
+
+function ColonyView.Start()
+	if started then
+		return
+	end
+	started = true
+
+	local folder = Instance.new("Folder")
+	folder.Name = "MyColony"
+	folder.Parent = workspace
+
+	local plot = Instance.new("Part")
+	plot.Name = "Plot"
+	plot.Anchored = true
+	plot.Material = Enum.Material.Grass
+	plot.Color = PLOT_COLOR
+	plot.TopSurface = Enum.SurfaceType.Smooth
+	plot.Parent = folder
+
+	local townHallLevel = source(player:GetAttribute("TownHallLevel") :: number?)
+	player:GetAttributeChangedSignal("TownHallLevel"):Connect(function()
+		townHallLevel(player:GetAttribute("TownHallLevel") :: number?)
+	end)
+
+	vide.root(function()
+		effect(function()
+			local size = PlotData.GetSize(townHallLevel() or 0)
+			plot.Size = Vector3.new(size, PlotData.THICKNESS, size)
+			plot.CFrame = PlotData.SURFACE * CFrame.new(0, -PlotData.THICKNESS / 2, 0)
+		end)
+
+		effect(function()
+			local buildings = ColonyStore.Buildings()
+			for id, model in ColonyStore.Models do
+				model:Destroy()
+				ColonyStore.Models[id] = nil
+			end
+			table.clear(sites)
+			for _, saved in buildings do
+				createBuilding(saved, folder)
+			end
+			vide.untrack(updateSites)
+		end)
+
+		effect(function()
+			ColonyStore.WorkOrders()
+			updateSites()
+		end)
+
+		effect(updateMailbox)
+	end)
+
+	hideOthers()
+end
+
+return ColonyView
