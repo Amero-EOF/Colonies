@@ -8,7 +8,9 @@ const Packages = ReplicatedStorage.Packages
 const vide = require(Packages.vide)
 const Net = require(Packages.Net)
 const BuildingData = require(Shared.Buildings.BuildingData)
+const BuildingPlacement = require(Shared.Buildings.BuildingPlacement)
 const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
+const PlotData = require(Shared.Plot.PlotData)
 const ColonyStore = require(script.Parent.Parent.Parent.Colony.ColonyStore)
 
 const create = vide.create
@@ -71,10 +73,35 @@ local function TownHallPanel(props: Props)
 		return props.Level() or 0
 	end
 
-	-- Needs a Builder's Hut of the target level
+	-- Needs a Builder's Hut of the target level. Before the Town Hall is placed, says how to get
+	-- there (Builder's Hut first, then the Town Hall from the Build menu).
 	local canUpgrade = function(): (boolean, string)
 		local builderHut = ColonyStore.GetBuilding("BuilderHut")
-		return BuildingUnlocks.CanUpgrade("TownHall", level(), level(), if builderHut then builderHut.Level else 0)
+		local builderHutLevel = if builderHut then builderHut.Level else 0
+		local townHall = ColonyStore.GetBuilding("TownHall")
+		if not townHall or not townHall.Placement then
+			return false,
+				if BuildingUnlocks.IsUnlocked("TownHall", level(), builderHutLevel)
+					then "Place it from the Build menu"
+					else BuildingUnlocks.GetLockReason("TownHall")
+		end
+		local canUpgrade, reason =
+			BuildingUnlocks.CanUpgrade("TownHall", level(), level(), builderHutLevel)
+		if not canUpgrade then
+			return false, reason
+		end
+		-- The next level may have a bigger footprint that needs room on the plot
+		local fits, blocked = BuildingPlacement.CanGrow(
+			townHall,
+			townHall.Level + 1,
+			PlotData.GetSize(level()),
+			ColonyStore.Buildings(),
+			ColonyStore.WorkOrders()
+		)
+		if not fits then
+			return false, blocked or "Not enough room"
+		end
+		return true, reason
 	end
 	-- True while the upgrade preview with its confirm button is shown
 	local confirming = source(false)
@@ -141,7 +168,9 @@ local function TownHallPanel(props: Props)
 				Text = function()
 					local pending = pendingLevel()
 					if pending then
-						return `Builder upgrading to Lv {pending}...`
+						return if pending == 1
+							then "Builder building the Town Hall..."
+							else `Builder upgrading to Lv {pending}...`
 					end
 					local _, reason = canUpgrade()
 					return reason
@@ -155,7 +184,12 @@ local function TownHallPanel(props: Props)
 
 			button("Move", 2, Color3.fromRGB(90, 90, 60), {
 				Text = "Move Town Hall",
-				Activated = props.OnMove,
+				Activated = function()
+					local townHall = ColonyStore.GetBuilding("TownHall")
+					if townHall and townHall.Placement then
+						props.OnMove()
+					end
+				end,
 			}),
 		}),
 

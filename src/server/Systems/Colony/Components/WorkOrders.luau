@@ -67,8 +67,9 @@ local function migrate(data: ColonyData)
 	for _, order in data.WorkOrders do
 		local old = order :: any
 		old.CompleteAt = nil
-		order.Progress = order.Progress or 0
 		order.TotalParts = #BuildingBlueprint.Get(order.BuildingId, order.TargetLevel).Parts
+		-- Blueprints can shrink (upgrades only place the pieces a level adds)
+		order.Progress = math.min(order.Progress or 0, order.TotalParts)
 		order.BuilderId = nil
 	end
 end

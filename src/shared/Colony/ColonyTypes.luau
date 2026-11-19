@@ -4,6 +4,7 @@ const BuildingTypes = require(script.Parent.Parent.Buildings.BuildingTypes)
 const ColonistTypes = require(script.Parent.Parent.Colonist.ColonistTypes)
 const FarmData = require(script.Parent.Parent.Farm.FarmData)
 const InventoryTypes = require(script.Parent.Parent.Inventory.InventoryTypes)
+const YardData = require(script.Parent.Parent.Yard.YardData)
 
 type BuildingId = BuildingTypes.BuildingId
 
@@ -70,6 +71,17 @@ export type Mail = {
 	Read: boolean,
 }
 
+-- When raiders next come (RaidController). A raid in progress isn't saved, only what its
+-- raiders carry, so the items can be given back if the raid is cut short.
+export type RaidSchedule = {
+	-- DayCycle day whose night the next raid comes on; 0 until the colony can be raided
+	NextDay: number,
+	-- DayCycle day the colony was last loaded on (days spent away don't bring a raid closer)
+	SeenDay: number,
+	-- Stacks raiders took from the storage and haven't escaped with yet
+	Carried: { MailItem },
+}
+
 -- Saved per player with ProfileStore
 export type ColonyData = {
 	-- nil until the player names their colony
@@ -81,12 +93,15 @@ export type ColonyData = {
 	Buildings: { SavedBuilding },
 	-- The player's bags; Bags[1] is the backpack
 	Inventory: InventoryTypes.Inventory,
-	-- Colony storage, deposited into at the Town Hall or Warehouse
+	-- Colony storage, deposited into at the Town Hall or Warehouse (at the Spire until the
+	-- Town Hall is built)
 	Storage: InventoryTypes.Bag,
 	-- Storage owned by worker buildings (WorkerStorage component), by building id
 	HutStorage: { [string]: InventoryTypes.Bag },
 	-- Crop fields of buildings with a Field component, by building id; index = wedge (1-6)
 	Fields: { [string]: { FarmData.Plot } },
+	-- Resource nodes of buildings with a Yard component, by building id; index = node (YardData)
+	Yards: { [string]: { YardData.Node } },
 	Colonists: { ColonistTypes.Colonist },
 	-- Dead or departed colonists, kept for family trees
 	Departed: { ColonistTypes.DepartedColonist },
@@ -99,6 +114,10 @@ export type ColonyData = {
 	-- Town Hall mailbox, oldest first; no capacity limit
 	Mail: { Mail },
 	NextMailId: number,
+	-- Raid schedule; nil in saves from before raids (RaidController fills it in)
+	Raid: RaidSchedule?,
+	-- Save format version (ColonyController's migrate); nil in saves from before versioning
+	Version: number?,
 }
 
 return 0

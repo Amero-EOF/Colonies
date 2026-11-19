@@ -32,6 +32,8 @@ const TeleportHud = require(Components.TeleportHud)
 const WorkScrollPanel = require(Components.WorkScrollPanel)
 const ZoneBanner = require(Components.ZoneBanner)
 const Notifications = require(Components.Notifications)
+const RaidHud = require(Components.RaidHud)
+const CreativeMenu = require(Components.CreativeMenu)
 
 const create = vide.create
 const source = vide.source
@@ -43,15 +45,17 @@ type BuildingId = BuildingTypes.BuildingId
 
 local function App()
 	local townHallLevel = attributeSource("TownHallLevel")
-	local townHallPlaced = attributeSource("TownHallPlaced")
 	local moving = source(nil :: BuildingId?)
 
-	-- The building the ghost is placing: the unplaced Town Hall (once the colony is named), or whatever is being moved
+	-- The building the ghost is placing: whatever is being moved, or on a new colony (once
+	-- it's named) the first building, the Builder's Hut
 	local placingId = function(): BuildingId?
 		if not ColonyStore.Loaded() or ColonyStore.Name() == nil then
 			return nil
 		end
-		return moving() or (if townHallPlaced() == false then "TownHall" else nil)
+		local isNewColony = ColonyStore.GetBuilding("BuilderHut") == nil
+			and ColonyStore.GetBuilding("TownHall") == nil
+		return moving() or (if isNewColony then "BuilderHut" else nil)
 	end
 
 	local placing = function()
@@ -129,6 +133,12 @@ local function App()
 
 		Notifications(),
 
+		RaidHud({
+			Enabled = function()
+				return not placing()
+			end,
+		}),
+
 		ColonistPanel(),
 
 		ColonistDialogue(),
@@ -140,6 +150,9 @@ local function App()
 		MailboxPanel(),
 
 		WorkScrollPanel(),
+
+		-- Dev-only, opened by the `creative` Cmdr command
+		CreativeMenu(),
 
 		show(function()
 			return ColonyStore.Loaded() and ColonyStore.Name() == nil

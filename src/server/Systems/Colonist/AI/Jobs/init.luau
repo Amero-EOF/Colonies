@@ -5,6 +5,8 @@ const Agent = require(script.Parent.Agent)
 const Tasks = require(script.Parent.Tasks)
 const Builder = require(script.Builder)
 const Farmer = require(script.Farmer)
+const Gatherer = require(script.Gatherer)
+const Guard = require(script.Guard)
 
 type Agent = Agent.Agent
 
@@ -13,13 +15,18 @@ type Agent = Agent.Agent
 const JOB_NODES: { [string]: () -> any } = {
 	Builder = Builder.Node,
 	Farmer = Farmer.Node,
+	-- Patrols by day; during a raid the brain's "Defend" mode takes over (Guard.DefendNode)
+	Guard = Guard.Node,
+	-- Workers of a resource yard (YardData): one behavior, set up per yard kind
+	Forester = Gatherer.NodeFor("Trees"),
+	Miner = Gatherer.NodeFor("Rocks"),
 }
 
 const WORK_TIME_MIN = 8
 const WORK_TIME_MAX = 15
 
 local function workplaceDoor(agent: Agent): (Vector3?, Vector3?)
-	return Tasks.DoorOf(agent, agent.Colonist.Workplace)
+	return Tasks.WorkSpot(agent)
 end
 
 local function genericJob()

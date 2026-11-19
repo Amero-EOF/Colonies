@@ -82,6 +82,69 @@ function BuildingBlueprint.GetOrderedParts(model: Model): { BasePart }
 	return parts
 end
 
+-- Identifies a part across levels: name, position and size relative to `pivot`, which should be
+-- the model's layout frame (BuildingModels.GetLayoutFrame) so levels with different base centres
+-- still match up
+function BuildingBlueprint.GetPartKey(pivot: CFrame, part: BasePart): string
+	local offset = pivot:PointToObjectSpace(part.Position)
+	local size = part.Size
+	-- `+ 0` turns -0 into 0 so both print the same
+	local function n(value: number): number
+		return math.round(value * 10) + 0
+	end
+	return `{part.Name}|{n(offset.X)},{n(offset.Y)},{n(offset.Z)}|{n(size.X)},{n(size.Y)},{n(size.Z)}`
+end
+
+const keyCache: { [string]: { [string]: boolean } } = {}
+
+-- Keys (GetPartKey) of every part in the building's model at `level`; empty below level 1
+function BuildingBlueprint.GetPartKeys(id: BuildingId, level: number): { [string]: boolean }
+	local cacheKey = `{id}_{level}`
+	local cached = keyCache[cacheKey]
+	if cached then
+		return cached
+	end
+	local keys: { [string]: boolean } = {}
+	if level >= 1 then
+		local model = BuildingModels.Create(id, level)
+		local pivot = BuildingModels.GetLayoutFrame(model)
+		for _, descendant in model:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				keys[BuildingBlueprint.GetPartKey(pivot, descendant)] = true
+			end
+		end
+		model:Destroy()
+	end
+	keyCache[cacheKey] = keys
+	return keys
+end
+
+-- The parts a Builder places to reach `level`, in build order: at level 1 the whole model, above it
+-- only the pieces the level adds to the one below. Returns the whole model when the two levels
+-- look the same; the boolean is true when the list is just the added pieces (or level 1).
+function BuildingBlueprint.GetBuildParts(
+	model: Model,
+	id: BuildingId,
+	level: number
+): ({ BasePart }, boolean)
+	local ordered = BuildingBlueprint.GetOrderedParts(model)
+	if level <= 1 then
+		return ordered, true
+	end
+	local previous = BuildingBlueprint.GetPartKeys(id, level - 1)
+	local pivot = BuildingModels.GetLayoutFrame(model)
+	local added = {}
+	for _, part in ordered do
+		if not previous[BuildingBlueprint.GetPartKey(pivot, part)] then
+			table.insert(added, part)
+		end
+	end
+	if #added == 0 then
+		return ordered, false
+	end
+	return added, true
+end
+
 function BuildingBlueprint.GetMaterial(part: BasePart): string
 	local override = part:GetAttribute("BuildMaterial")
 	if typeof(override) == "string" then
@@ -144,7 +207,7 @@ local function distribute(amount: number, weights: { number }): { number }
 	return shares
 end
 
--- Parts of the building's model at `level`, bottom-up, with the level's cost spread across them.
+-- Parts placed to reach `level` (GetBuildParts), bottom-up, with the level's cost spread across them.
 -- Each material is shared by the parts made of it, weighted by part volume; a material with no
 -- matching parts is shared by every part.
 function BuildingBlueprint.Get(id: BuildingId, level: number): Blueprint
@@ -155,7 +218,7 @@ function BuildingBlueprint.Get(id: BuildingId, level: number): Blueprint
 	end
 
 	local model = BuildingModels.Create(id, level)
-	local ordered = BuildingBlueprint.GetOrderedParts(model)
+	local ordered = BuildingBlueprint.GetBuildParts(model, id, level)
 
 	local parts: { BlueprintPart } = {}
 	local volumes: { number } = {}

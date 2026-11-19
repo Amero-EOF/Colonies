@@ -9,6 +9,7 @@ const ColonistMotion = require(Shared.Colonist.ColonistMotion)
 const ColonistTypes = require(Shared.Colonist.ColonistTypes)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
 const Navigation = require(script.Parent.Parent.Components.Navigation)
+const Raiders = require(script.Parent.Parent.Parent.Raid.Components.Raiders)
 
 type Action = ColonistTypes.Action
 type Colonist = ColonistTypes.Colonist
@@ -21,6 +22,8 @@ export type Context = {
 	Grid: Navigation.Grid,
 	Random: Random,
 	Funeral: ColonistTypes.Funeral?,
+	-- The raid in progress, set by RaidController while it lasts (Guards fight its raiders)
+	Raid: Raiders.Raid?,
 	-- Motions changed since the last send, by colonist id
 	ChangedMotions: { [number]: Motion },
 	-- Hooks into the colony (kept here so AI modules don't require controllers)
@@ -87,6 +90,26 @@ function Agent.WalkTo(agent: Agent, target: Vector3, action: Action, lookAt: Vec
 		Id = agent.Colonist.Id,
 		Path = Navigation.FindPath(agent.Context.Grid, from, target),
 		Speed = getSpeed(agent),
+		StartTime = now,
+		Action = action,
+		LookAt = lookAt,
+	})
+end
+
+-- Like WalkTo at a given speed (Guards run at raiders)
+function Agent.RunTo(
+	agent: Agent,
+	target: Vector3,
+	speed: number,
+	action: Action,
+	lookAt: Vector3?,
+	now: number
+)
+	local from = Agent.GetPosition(agent, now)
+	setMotion(agent, {
+		Id = agent.Colonist.Id,
+		Path = Navigation.FindPath(agent.Context.Grid, from, target),
+		Speed = speed,
 		StartTime = now,
 		Action = action,
 		LookAt = lookAt,

@@ -30,8 +30,9 @@ return table.freeze({
 	SKILL_MAX = 15,
 	CHILD_SKILL_SPREAD = 3,
 
-	WALK_SPEED = 10,
-	CHILD_WALK_SPEED = 8,
+	-- Studs/second, sped up with DayCycle.TIME_SCALE
+	WALK_SPEED = DayCycle.Speed(10),
+	CHILD_WALK_SPEED = DayCycle.Speed(8),
 
 	-- Saturation lost per in-game day; doubled for the night a colonist is woken
 	SATURATION_PER_DAY = 10,

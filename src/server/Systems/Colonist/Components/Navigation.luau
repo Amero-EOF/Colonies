@@ -6,8 +6,10 @@ const Shared = ReplicatedStorage.Shared
 
 const BuildingData = require(Shared.Buildings.BuildingData)
 const BuildingModels = require(Shared.Buildings.BuildingModels)
+const BuildingSpots = require(Shared.Buildings.BuildingSpots)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
 const FarmData = require(Shared.Farm.FarmData)
+const YardData = require(Shared.Yard.YardData)
 const PlotData = require(Shared.Plot.PlotData)
 
 type ColonyData = ColonyTypes.ColonyData
@@ -21,6 +23,15 @@ export type Grid = {
 	Count: number,
 	Half: number,
 	Blocked: { [number]: boolean },
+	-- Building footprints (without the margin) colonists can step into from their door
+	Rooms: { Room },
+}
+
+-- Axis-aligned footprint of a placed building and the walkable spot at its door
+type Room = {
+	Centre: Vector3,
+	Half: Vector2,
+	Door: Vector3,
 }
 
 const CELL_SIZE = 4
@@ -49,6 +60,10 @@ end
 local function getObstacleSize(saved: SavedBuilding): Vector2
 	if BuildingData[saved.Id].Components.Field then
 		return Vector2.new(FarmData.HUT_FOOTPRINT, FarmData.HUT_FOOTPRINT)
+	end
+	-- Same for a resource yard: its nodes don't block anyone
+	if BuildingData[saved.Id].Components.Yard then
+		return Vector2.new(YardData.HUT_FOOTPRINT, YardData.HUT_FOOTPRINT)
 	end
 	return BuildingModels.GetFootprint(saved.Id, saved.Level)
 end
@@ -116,6 +131,7 @@ function Navigation.GetGrid(data: ColonyData, previous: Grid?): Grid
 		Count = math.floor(size / CELL_SIZE),
 		Half = size / 2,
 		Blocked = {},
+		Rooms = {},
 	}
 
 	for _, saved in data.Buildings do
@@ -139,6 +155,20 @@ function Navigation.GetGrid(data: ColonyData, previous: Grid?): Grid
 				end
 			end
 		end
+	end
+
+	-- Doors are snapped once every footprint is blocked
+	for _, saved in data.Buildings do
+		local placement = saved.Placement
+		local door = Navigation.GetDoor(saved)
+		if not placement or not door then
+			continue
+		end
+		table.insert(grid.Rooms, {
+			Centre = Vector3.new(placement.X, 0, placement.Z),
+			Half = getRotatedFootprint(saved) / 2 + Vector2.new(MARGIN, MARGIN),
+			Door = Navigation.Snap(grid, door),
+		})
 	end
 
 	return grid
@@ -250,7 +280,7 @@ const NEIGHBOURS = {
 
 -- A* over the grid, then string-pulled. Returns plot-local points from `from` to `to`
 -- (the end is moved to the nearest walkable spot when it sits inside a building).
-function Navigation.FindPath(grid: Grid, from: Vector3, to: Vector3): { Vector3 }
+local function findOutdoorPath(grid: Grid, from: Vector3, to: Vector3): { Vector3 }
 	from = Vector3.new(from.X, 0, from.Z)
 	to = Navigation.Snap(grid, to)
 
@@ -336,6 +366,41 @@ function Navigation.FindPath(grid: Grid, from: Vector3, to: Vector3): { Vector3 
 	return path
 end
 
+-- The building footprint a point stands inside, if any
+local function getRoom(grid: Grid, position: Vector3): Room?
+	if Navigation.IsWalkable(grid, position) then
+		return nil
+	end
+	for _, room in grid.Rooms do
+		local offset = position - room.Centre
+		if math.abs(offset.X) < room.Half.X and math.abs(offset.Z) < room.Half.Y then
+			return room
+		end
+	end
+	return nil
+end
+
+-- Like findOutdoorPath, but spots inside a building (beds, work spots) are reached through its
+-- door: the path goes to the door, then straight in. Leaving a building goes out its door first.
+function Navigation.FindPath(grid: Grid, from: Vector3, to: Vector3): { Vector3 }
+	from = Vector3.new(from.X, 0, from.Z)
+	local fromRoom = getRoom(grid, from)
+	local toRoom = getRoom(grid, to)
+	if fromRoom and fromRoom == toRoom then
+		return { from, Vector3.new(to.X, 0, to.Z) }
+	end
+
+	local start = if fromRoom then fromRoom.Door else from
+	local path = findOutdoorPath(grid, start, if toRoom then toRoom.Door else to)
+	if fromRoom then
+		table.insert(path, 1, from)
+	end
+	if toRoom then
+		table.insert(path, Vector3.new(to.X, 0, to.Z))
+	end
+	return path
+end
+
 -- Plot-local CFrame of a building's base centre (Y = 0), rotated like the building
 local function getBaseCFrame(placement: ColonyTypes.Placement): CFrame
 	return CFrame.new(placement.X, 0, placement.Z)
@@ -349,9 +414,17 @@ function Navigation.GetDoor(saved: SavedBuilding): Vector3?
 	if not placement then
 		return nil
 	end
+	local authored = BuildingSpots.GetAt(saved.Id, saved.Level, "Door", 1)
+	if authored then
+		local door = getBaseCFrame(placement) * authored.Position
+		return Vector3.new(door.X, 0, door.Z)
+	end
 	local offset
 	if BuildingData[saved.Id].Components.Field then
 		offset = Vector3.new(0, 0, -(FarmData.HUT_FOOTPRINT / 2 + MARGIN + DOOR_OFFSET))
+	elseif BuildingData[saved.Id].Components.Yard then
+		-- A resource yard's door is just outside its hut (local +Z), not at the yard's edge
+		offset = Vector3.new(0, 0, YardData.HUT_FOOTPRINT / 2 + MARGIN + DOOR_OFFSET)
 	else
 		local footprint = BuildingModels.GetFootprint(saved.Id, saved.Level)
 		offset = Vector3.new(0, 0, footprint.Y / 2 + MARGIN + DOOR_OFFSET)
@@ -374,6 +447,44 @@ end
 function Navigation.GetCentre(saved: SavedBuilding): Vector3?
 	local placement = saved.Placement
 	return if placement then Vector3.new(placement.X, 0, placement.Z) else nil
+end
+
+-- Plot-local position of an authored spot (BuildingSpots: "Bed", "Work", "StorageStand"...) and
+-- a point to face from there, or nil when the building's model has none
+function Navigation.GetSpot(
+	saved: SavedBuilding,
+	spot: string,
+	index: number?
+): (Vector3?, Vector3?)
+	local placement = saved.Placement
+	local authored = BuildingSpots.GetAt(saved.Id, saved.Level, spot, index or 1)
+	if not placement or not authored then
+		return nil, nil
+	end
+	local world = getBaseCFrame(placement) * authored
+	local position = Vector3.new(world.X, 0, world.Z)
+	local look = Vector3.new(world.LookVector.X, 0, world.LookVector.Z)
+	local lookAt = if look.Magnitude > 0.01 then position + look.Unit * DOOR_OFFSET else nil
+	return position, lookAt
+end
+
+-- Spot `index` of `count` evenly spread on a ring just outside a building (colonists standing
+-- and sleeping around the Spire before the Town Hall is built). Spots past `count` wrap round.
+function Navigation.GetRingSpot(
+	grid: Grid,
+	saved: SavedBuilding,
+	index: number,
+	count: number
+): Vector3?
+	local centre = Navigation.GetCentre(saved)
+	if not centre then
+		return nil
+	end
+	local footprint = getObstacleSize(saved)
+	local radius = math.max(footprint.X, footprint.Y) / 2 + MARGIN + DOOR_OFFSET
+	local angle = (index - 1) / math.max(count, 1) * math.pi * 2
+	local spot = centre + Vector3.new(math.cos(angle), 0, math.sin(angle)) * radius
+	return Navigation.Snap(grid, spot)
 end
 
 -- A random walkable point within `radius` of `around`

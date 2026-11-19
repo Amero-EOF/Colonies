@@ -96,6 +96,15 @@ const items: { Item } = {
 		MaxStack = 1,
 		Category = "Tool",
 	},
+	-- Weapon against raiders (RaidData): held from the hotbar, click a raider to strike it
+	{
+		UniqueID = 30,
+		ItemType = "Sword",
+		Metadata = { Holdable = true, Damage = 6 },
+		Stackable = false,
+		MaxStack = 1,
+		Category = "Tool",
+	},
 	-- Building material from Tier 3 up
 	{
 		UniqueID = 11,
@@ -158,6 +167,23 @@ const items: { Item } = {
 	{
 		UniqueID = 18,
 		ItemType = "FarmerHutStorage",
+		Metadata = { isBag = true },
+		Stackable = false,
+		MaxStack = 1,
+		Category = { "Bag" },
+	},
+	-- Storage of the yard huts (YardData): what their workers gather
+	{
+		UniqueID = 40,
+		ItemType = "ForesterHutStorage",
+		Metadata = { isBag = true },
+		Stackable = false,
+		MaxStack = 1,
+		Category = { "Bag" },
+	},
+	{
+		UniqueID = 41,
+		ItemType = "MineStorage",
 		Metadata = { isBag = true },
 		Stackable = false,
 		MaxStack = 1,

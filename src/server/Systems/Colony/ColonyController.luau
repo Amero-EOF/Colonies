@@ -24,6 +24,7 @@ const BagMoves = require(Shared.Inventory.BagMoves)
 const InventoryTypes = require(Shared.Inventory.InventoryTypes)
 const ItemsList = require(Shared.Inventory.ItemsList)
 const FarmData = require(Shared.Farm.FarmData)
+const YardData = require(Shared.Yard.YardData)
 const PlotData = require(Shared.Plot.PlotData)
 const SpireData = require(Shared.Spire.SpireData)
 const Bag = require(Systems.Inventory.Components.Bag)
@@ -32,6 +33,7 @@ const InventoryController = require(Systems.Inventory.InventoryController)
 const ToolController = require(Systems.Tools.ToolController)
 const ColonyLog = require(script.Parent.Components.ColonyLog)
 const Mailbox = require(script.Parent.Components.Mailbox)
+const Notifications = require(script.Parent.Components.Notifications)
 const WorkOrders = require(script.Parent.Components.WorkOrders)
 
 type ColonyData = ColonyTypes.ColonyData
@@ -47,13 +49,14 @@ const storageItem = ItemsList.GetItemByItemType("TownHallStorage")
 assert(storageItem, "TownHallStorage item missing")
 
 const PROFILE_TEMPLATE: ColonyData = {
-	Buildings = {
-		{ Id = "TownHall", Level = 0 },
-	},
+	-- New colonies start with only the Spire (STARTING_BUILDINGS, added by migrate). The first
+	-- building is the Builder's Hut, then the Town Hall (BuildingUnlocks.IsUnlocked).
+	Buildings = {},
 	Inventory = Inventory.new(),
 	Storage = Bag.new(storageItem),
 	HutStorage = {},
 	Fields = {},
+	Yards = {},
 	Events = {},
 	WorkOrders = {},
 	NextWorkOrderId = 1,
@@ -77,6 +80,9 @@ const TELEPORT_CLEARANCE = 8
 -- Studs past a building's footprint its prompts reach (server allows some lag on top)
 const USE_REACH = 16
 const CHARACTER_GROUP = "Characters"
+-- Save format (ColonyData.Version). 2: the Builder's Hut comes first and the Town Hall is
+-- built like any other building (level 0 = construction site, no more built Tier 0)
+const SAVE_VERSION = 2
 
 -- Studio uses ProfileStore's mock store so testing never touches real saves
 const RealStore = ProfileStore.New("Colonies", PROFILE_TEMPLATE)
@@ -138,6 +144,7 @@ local function getState(data: ColonyData)
 		Storage = data.Storage,
 		HutStorage = data.HutStorage,
 		Fields = data.Fields,
+		Yards = data.Yards,
 		Events = data.Events,
 		WorkOrders = data.WorkOrders,
 		Mail = data.Mail,
@@ -172,6 +179,17 @@ local function ensureFields(data: ColonyData)
 			field[wedge] = field[wedge] or {}
 		end
 		data.Fields[saved.Id] = field
+	end
+end
+
+-- Gives every building with a Yard component its resource nodes (only filling gaps in saved ones)
+local function ensureYards(data: ColonyData)
+	for _, saved in data.Buildings do
+		local yard = BuildingData[saved.Id].Components.Yard
+		local info = yard and YardData.GetInfo(yard.Kind)
+		if info then
+			data.Yards[saved.Id] = YardData.FillNodes(info, data.Yards[saved.Id])
+		end
 	end
 end
 
@@ -220,11 +238,47 @@ local function rescueGlitchedItems(data: ColonyData)
 	end
 end
 
+-- Saves from before the Builder's Hut came first had a Town Hall from the start, finished at
+-- Tier 0. One that was never placed is dropped (it's now built like any other building, once
+-- the Builder's Hut stands); one that was placed keeps standing as the first built level (1),
+-- and Town Hall orders that level already covers are dropped.
+local function migrateTownHall(data: ColonyData)
+	-- Version is left out of PROFILE_TEMPLATE on purpose: reconciling would stamp old saves
+	-- with the current version before they're migrated
+	if (data.Version or 1) >= SAVE_VERSION then
+		return
+	end
+	data.Version = SAVE_VERSION
+
+	local townHall, index = getSaved(data, "TownHall")
+	if not townHall or not index then
+		return
+	end
+	if not townHall.Placement then
+		table.remove(data.Buildings, index)
+		for _, order in table.clone(data.WorkOrders) do
+			if order.BuildingId == "TownHall" then
+				WorkOrders.Remove(data, order.Id)
+			end
+		end
+		return
+	end
+
+	townHall.Level = math.max(townHall.Level, 1)
+	for _, order in table.clone(data.WorkOrders) do
+		if order.BuildingId == "TownHall" and order.TargetLevel <= townHall.Level then
+			WorkOrders.Remove(data, order.Id)
+		end
+	end
+end
+
 -- Fills in anything older saves are missing
 local function migrate(data: ColonyData)
 	local old = data :: any
 	old.Carried = nil
 	old.Stored = nil
+
+	migrateTownHall(data)
 
 	for id, placement in STARTING_BUILDINGS do
 		local saved = getSaved(data, id)
@@ -243,17 +297,12 @@ local function migrate(data: ColonyData)
 		spire.Level = SpireData.GetLevel(getTownHallLevel(data))
 	end
 
-	-- The Town Hall is never a construction site
-	for _, order in table.clone(data.WorkOrders) do
-		if order.BuildingId == "TownHall" and order.Kind == "Build" then
-			WorkOrders.Remove(data, order.Id)
-		end
-	end
-
 	WorkOrders.Migrate(data)
 	ensureHutStorage(data)
 	data.Fields = data.Fields or {}
 	ensureFields(data)
+	data.Yards = data.Yards or {}
+	ensureYards(data)
 	Mailbox.Migrate(data)
 	rescueGlitchedItems(data)
 end
@@ -292,35 +341,63 @@ local function onPlaceBuilding(
 	end
 
 	local data: ColonyData = colony.Profile.Data
-	local saved, index = getSaved(data, id)
+	local saved = getSaved(data, id)
 	local isNew = saved == nil
 	if not saved then
-		-- Building something new: it must be unlocked and the Town Hall placed first
-		local townHall = getSaved(data, "TownHall")
+		-- Building something new: it must be unlocked (the Builder's Hut first, then the Town
+		-- Hall once the hut is built, then the rest by Town Hall level)
 		local info = BuildingData[id :: any]
-		if not info or not townHall or not townHall.Placement then
+		if not info then
 			return false
 		end
-		if not BuildingUnlocks.IsUnlocked(info.Id, townHall.Level) then
+		local builderHutLevel = BuildingUnlocks.GetLevel(data.Buildings, "BuilderHut")
+		if not BuildingUnlocks.IsUnlocked(info.Id, getTownHallLevel(data), builderHutLevel) then
 			return false
 		end
 		saved = { Id = info.Id, Level = 1 }
 	end
 	assert(saved, "saved is set above")
 
-	local footprint = BuildingModels.GetFootprint(saved.Id, saved.Level)
+	-- Placed so every level it can grow to fits (its reach), clear of the other buildings' reach
+	local reachSize, reachCentre = BuildingPlacement.GetReach(saved.Id, saved.Level)
 	local plotSize = PlotData.GetSize(getTownHallLevel(data))
-	local placement =
-		BuildingPlacement.Resolve(plotSize, footprint, x :: number, z :: number, rotation :: number)
+	local placement = BuildingPlacement.Resolve(
+		plotSize,
+		reachSize,
+		x :: number,
+		z :: number,
+		rotation :: number,
+		reachCentre
+	)
 
-	for j, other in data.Buildings do
-		if j ~= index and other.Placement then
-			local otherFootprint = BuildingModels.GetFootprint(other.Id, other.Level)
-			if
-				BuildingPlacement.Overlaps(placement, footprint, other.Placement, otherFootprint)
-			then
-				return false
-			end
+	local obstacles =
+		BuildingPlacement.GetObstacles(data.Buildings, data.WorkOrders, saved.Id, true)
+	if
+		not BuildingPlacement.CheckSpace(
+			saved.Id,
+			saved.Level,
+			placement,
+			plotSize,
+			obstacles,
+			true
+		)
+	then
+		return false
+	end
+	-- Moving a building with an upgrade ordered: the bigger level must fit at the new spot too
+	local pending = WorkOrders.GetPending(data, saved.Id)
+	if pending and pending.TargetLevel > saved.Level then
+		local moved = { Id = saved.Id, Level = saved.Level, Placement = placement }
+		if
+			not BuildingPlacement.CanGrow(
+				moved,
+				pending.TargetLevel,
+				plotSize,
+				data.Buildings,
+				data.WorkOrders
+			)
+		then
+			return false
 		end
 	end
 
@@ -336,6 +413,7 @@ local function onPlaceBuilding(
 		end
 		ensureHutStorage(data)
 		ensureFields(data)
+		ensureYards(data)
 	end
 	if not saved.Placement then
 		ColonyLog.Add(data, `Placed the {BuildingData[saved.Id].Name}`)
@@ -373,6 +451,20 @@ local function onUpgradeBuilding(player: Player, id: unknown)
 		return
 	end
 
+	-- A level with a bigger footprint must have room on the plot
+	local plotSize = PlotData.GetSize(getTownHallLevel(data))
+	if
+		not BuildingPlacement.CanGrow(
+			saved,
+			saved.Level + 1,
+			plotSize,
+			data.Buildings,
+			data.WorkOrders
+		)
+	then
+		return
+	end
+
 	local order = WorkOrders.CreateUpgrade(data, saved.Id, saved.Level + 1)
 	local name = BuildingData[saved.Id].Name
 	ColonyLog.Add(data, `Work order #{order.Id}: upgrade the {name} to level {order.TargetLevel}`)
@@ -380,13 +472,21 @@ local function onUpgradeBuilding(player: Player, id: unknown)
 end
 
 -- Applies a finished work order. The plot grows with the Town Hall and the Spire follows it.
-local function completeWorkOrder(data: ColonyData, order: ColonyTypes.WorkOrder)
+-- Returns a milestone to announce to the player, if any.
+local function completeWorkOrder(data: ColonyData, order: ColonyTypes.WorkOrder): string?
 	local saved = getSaved(data, order.BuildingId)
 	if not saved then
-		return
+		return nil
 	end
 
-	saved.Level = math.max(saved.Level, order.TargetLevel)
+	local wasBuilt = BuildingUnlocks.IsBuilt(saved.Id, saved.Level)
+	local level = math.max(saved.Level, order.TargetLevel)
+	-- A level that grows to one side has its base centre elsewhere; move the placement with it so
+	-- the parts both levels share don't move
+	if saved.Placement and level ~= saved.Level then
+		saved.Placement = BuildingPlacement.GetLevelPlacement(saved, level)
+	end
+	saved.Level = level
 	if saved.Id == "TownHall" then
 		local spire = getSaved(data, "Spire")
 		if spire then
@@ -398,6 +498,22 @@ local function completeWorkOrder(data: ColonyData, order: ColonyTypes.WorkOrder)
 		data,
 		`Builder finished #{order.Id}: {BuildingData[saved.Id].Name} is now level {saved.Level}`
 	)
+
+	-- Early progression: Builder's Hut -> Town Hall -> everything else
+	if wasBuilt then
+		return nil
+	end
+	local milestone: string? = nil
+	if saved.Id == "BuilderHut" and not getSaved(data, "TownHall") then
+		milestone = "The Builder's Hut is built! You can now place the Town Hall."
+	elseif saved.Id == "TownHall" then
+		milestone =
+			"The Town Hall is built! Colonists now eat and sleep there, and new buildings are unlocked."
+	end
+	if milestone then
+		ColonyLog.Add(data, milestone)
+	end
+	return milestone
 end
 
 local function onSetColonyName(player: Player, name: unknown): (boolean, string)
@@ -432,6 +548,13 @@ local function onSetColonyName(player: Player, name: unknown): (boolean, string)
 	sync(colony)
 
 	return true, "Saved"
+end
+
+-- Where colony storage is reached, for "too far" messages
+local function getStorageHint(townHallBuilt: boolean): string
+	return if townHallBuilt
+		then "Stand next to your Town Hall or Warehouse"
+		else "Stand next to your Spire (colony storage is there until the Town Hall is built)"
 end
 
 -- True when the player stands within reach of one of their placed buildings
@@ -482,8 +605,9 @@ local function onDeposit(player: Player, target: unknown): (boolean, string)
 			if moved > 0 then `Delivered {moved} items to the {name}` else "Nothing to deliver"
 	end
 
+	local townHallBuilt = BuildingUnlocks.IsTownHallBuilt(data.Buildings)
 	for _, saved in data.Buildings do
-		if BuildingData[saved.Id].Components.Storage and isNear(player, saved) then
+		if BuildingUnlocks.IsStorageSpot(saved, townHallBuilt) and isNear(player, saved) then
 			local moved = InventoryController.Deposit(data)
 			if moved > 0 then
 				ColonyLog.Add(data, `Deposited {moved} items`)
@@ -493,7 +617,7 @@ local function onDeposit(player: Player, target: unknown): (boolean, string)
 		end
 	end
 
-	return false, "Stand next to your Town Hall or Warehouse"
+	return false, getStorageHint(townHallBuilt)
 end
 
 -- Bags of this colony that MoveItems may change for the player: the backpack anywhere,
@@ -517,12 +641,13 @@ local function resolveStorage(player: Player): (InventoryTypes.Bag?, string)
 		return nil, "Colony not loaded"
 	end
 	local data: ColonyData = colony.Profile.Data
+	local townHallBuilt = BuildingUnlocks.IsTownHallBuilt(data.Buildings)
 	for _, saved in data.Buildings do
-		if BuildingData[saved.Id].Components.Storage and isNear(player, saved) then
+		if BuildingUnlocks.IsStorageSpot(saved, townHallBuilt) and isNear(player, saved) then
 			return data.Storage, ""
 		end
 	end
-	return nil, "Stand next to your Town Hall or Warehouse"
+	return nil, getStorageHint(townHallBuilt)
 end
 
 local function resolveHutStorage(player: Player, id: string?): (InventoryTypes.Bag?, string)
@@ -671,10 +796,14 @@ function ColonyController.CompleteWorkOrder(player: Player, orderId: number)
 	end
 
 	WorkOrders.Remove(data, orderId)
-	completeWorkOrder(data, order)
+	local milestone = completeWorkOrder(data, order)
 	ensureHutStorage(data)
 	ensureFields(data)
+	ensureYards(data)
 	ColonyController.Sync(player)
+	if milestone then
+		Notifications.Send(player, "ColonyEvent", milestone)
+	end
 end
 
 -- Players whose colony has loaded

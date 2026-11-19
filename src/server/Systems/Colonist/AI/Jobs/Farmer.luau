@@ -302,7 +302,7 @@ end
 -------- Targets --------
 
 local function hutDoor(agent: Agent): (Vector3?, Vector3?)
-	return Tasks.DoorOf(agent, agent.Colonist.Workplace)
+	return Tasks.StorageSpot(agent)
 end
 
 -- Middle of a wedge, facing along it toward the field's edge

@@ -7,6 +7,7 @@ const Packages = ReplicatedStorage.Packages
 const Shared = ReplicatedStorage.Shared
 
 const vide = require(Packages.vide)
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const WildAreaData = require(Shared.Wilds.WildAreaData)
 const ColonyStore = require(script.Parent.Parent.Parent.Colony.ColonyStore)
 const ZoneStore = require(script.Parent.Parent.Parent.Colony.ZoneStore)
@@ -33,7 +34,6 @@ local function ZoneBanner()
 	ZoneStore.Start()
 
 	local townHallLevel = attributeSource("TownHallLevel")
-	local townHallPlaced = attributeSource("TownHallPlaced")
 	-- Zone the banner is (or was last) showing; kept while fading out
 	local shown = source(nil :: ZoneId?)
 	local transparency = source(1)
@@ -50,8 +50,11 @@ local function ZoneBanner()
 	local subtitle = function(): string
 		local zone = shown()
 		if zone == "Colony" then
-			if townHallPlaced() == false then
-				return "Place your Town Hall to settle"
+			if not BuildingUnlocks.IsTownHallBuilt(ColonyStore.Buildings()) then
+				local builderHut = ColonyStore.GetBuilding("BuilderHut")
+				return if builderHut and builderHut.Level >= 1
+					then "Build your Town Hall to settle"
+					else "Build a Builder's Hut to get started"
 			end
 			return `Town Hall level {townHallLevel() or 0}`
 		end

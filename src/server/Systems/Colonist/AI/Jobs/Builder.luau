@@ -285,6 +285,12 @@ local function buildTask()
 				return RUNNING
 			end
 
+			-- A save whose blueprint shrank can load with every part already placed
+			if order.Progress >= order.TotalParts then
+				agent.Context.CompleteWorkOrder(order.Id)
+				agent.Blackboard.OrderId = nil
+				return SUCCESS
+			end
 			local cost = getNextPartCost(order)
 			if not cost or not covers(agent, cost) then
 				return SUCCESS
@@ -319,7 +325,7 @@ local function buildTask()
 end
 
 local function hutDoor(agent: Agent): (Vector3?, Vector3?)
-	return Tasks.DoorOf(agent, HUT)
+	return Tasks.SpotOf(agent, HUT, "StorageStand")
 end
 
 local function siteDoor(agent: Agent): (Vector3?, Vector3?)

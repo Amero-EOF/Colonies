@@ -8,11 +8,14 @@ const Shared = ReplicatedStorage.Shared
 const vide = require(Packages.vide)
 const Net = require(Packages.Net)
 const BuildingData = require(Shared.Buildings.BuildingData)
+const BuildingPlacement = require(Shared.Buildings.BuildingPlacement)
 const BuildingTypes = require(Shared.Buildings.BuildingTypes)
 const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
+const PlotData = require(Shared.Plot.PlotData)
 const ColonyStore = require(script.Parent.Parent.Parent.Colony.ColonyStore)
 const FieldPanel = require(script.Parent.FieldPanel)
 const WorkOrderList = require(script.Parent.WorkOrderList)
+const YardPanel = require(script.Parent.YardPanel)
 const attributeSource = require(script.Parent.Parent.attributeSource)
 
 const create = vide.create
@@ -29,7 +32,7 @@ const TAB_COLOR = Color3.fromRGB(55, 55, 55)
 const SELECTED_TAB_COLOR = Color3.fromRGB(70, 90, 140)
 const WORK_ORDERS_HEIGHT = 260
 
-type Tab = "Building" | "WorkOrders" | "Field"
+type Tab = "Building" | "WorkOrders" | "Field" | "Yard"
 
 -- Extra tabs some buildings get besides their own page
 const BUILDING_TABS: { [BuildingId]: { { Id: Tab, Name: string } } } = {
@@ -40,6 +43,14 @@ const BUILDING_TABS: { [BuildingId]: { { Id: Tab, Name: string } } } = {
 	FarmerHut = {
 		{ Id = "Building", Name = "Building" },
 		{ Id = "Field", Name = "Field" },
+	},
+	ForesterHut = {
+		{ Id = "Building", Name = "Building" },
+		{ Id = "Yard", Name = "Trees" },
+	},
+	Mine = {
+		{ Id = "Building", Name = "Building" },
+		{ Id = "Yard", Name = "Rocks" },
 	},
 }
 
@@ -107,12 +118,28 @@ local function BuildingPanel(props: Props)
 
 		local canUpgrade = function(): (boolean, string)
 			local builderHut = ColonyStore.GetBuilding("BuilderHut")
-			return BuildingUnlocks.CanUpgrade(
+			local canUpgrade, reason = BuildingUnlocks.CanUpgrade(
 				id(),
 				level(),
 				townHallLevel() or 0,
 				if builderHut then builderHut.Level else 0
 			)
+			local saved = ColonyStore.GetBuilding(id())
+			if not canUpgrade or not saved or not saved.Placement then
+				return canUpgrade, reason
+			end
+			-- The next level may have a bigger footprint that needs room on the plot
+			local fits, blocked = BuildingPlacement.CanGrow(
+				saved,
+				saved.Level + 1,
+				PlotData.GetSize(townHallLevel() or 0),
+				ColonyStore.Buildings(),
+				ColonyStore.WorkOrders()
+			)
+			if not fits then
+				return false, blocked or "Not enough room"
+			end
+			return true, reason
 		end
 
 		return create("Frame")({
@@ -187,6 +214,9 @@ local function BuildingPanel(props: Props)
 				return id() == "BuilderHut" and onBuildingTab()
 			end, function()
 				return line(function()
+					if level() <= 1 then
+						return "Lets the Town Hall be built"
+					end
 					return `Lets the Town Hall be upgraded to level {math.min(
 						level(),
 						BuildingUnlocks.MAX_LEVEL
@@ -204,6 +234,12 @@ local function BuildingPanel(props: Props)
 				return tab() == "Field"
 			end, function()
 				return FieldPanel(5)
+			end),
+
+			show(function()
+				return tab() == "Yard"
+			end, function()
+				return YardPanel(id, 5)
 			end),
 
 			create("Frame")({

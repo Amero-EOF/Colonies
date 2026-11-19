@@ -8,6 +8,7 @@ const Packages = ReplicatedStorage.Packages
 const Systems = script.Parent.Parent
 
 const Net = require(Packages.Net)
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const ColonistData = require(Shared.Colonist.ColonistData)
 const ColonistTypes = require(Shared.Colonist.ColonistTypes)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
@@ -55,6 +56,16 @@ const ColonistController = {}
 const colonies: { [Player]: Colony } = {}
 local started = false
 
+-- Other systems that step with a colony's colonists (see ColonistController.OnStep)
+type StepHook = (
+	player: Player,
+	context: Context,
+	agents: { [number]: Agent },
+	deltaTime: number,
+	now: number
+) -> ()
+const stepHooks: { StepHook } = {}
+
 local function getSaved(data: ColonyData, id: string): ColonyTypes.SavedBuilding?
 	for _, saved in data.Buildings do
 		if saved.Id == id and saved.Placement then
@@ -64,9 +75,24 @@ local function getSaved(data: ColonyData, id: string): ColonyTypes.SavedBuilding
 	return nil
 end
 
-local function getSpawn(data: ColonyData): Vector3
-	local townHall = getSaved(data, "TownHall")
-	return (townHall and Navigation.GetDoor(townHall)) or Vector3.zero
+-- A placed building that is built (not a construction site)
+local function getBuilt(data: ColonyData, id: string): ColonyTypes.SavedBuilding?
+	local saved = getSaved(data, id)
+	return if saved and BuildingUnlocks.IsBuilt(saved.Id, saved.Level) then saved else nil
+end
+
+-- At the Town Hall's door once it's built; before that, in a ring around the Spire
+local function getSpawn(context: Context, colonist: Colonist): Vector3
+	local data = context.Data
+	local townHall = getBuilt(data, "TownHall")
+	local door = townHall and Navigation.GetDoor(townHall)
+	if door then
+		return door
+	end
+	local spire = getSaved(data, "Spire")
+	local spot = spire
+		and Navigation.GetRingSpot(context.Grid, spire, colonist.Id, Population.STARTING_COLONISTS)
+	return spot or Vector3.zero
 end
 
 local function log(player: Player, text: string)
@@ -152,7 +178,7 @@ local function syncAgents(colony: Colony, now: number)
 	for _, colonist in context.Data.Colonists do
 		alive[colonist.Id] = true
 		if not colony.Agents[colonist.Id] then
-			local agent = Agent.new(colonist, context, getSpawn(context.Data), now)
+			local agent = Agent.new(colonist, context, getSpawn(context, colonist), now)
 			colony.Agents[colonist.Id] = agent
 			context.ChangedMotions[colonist.Id] = agent.Motion
 		end
@@ -167,7 +193,9 @@ end
 
 local function startFuneral(colony: Colony, colonist: Colonist, now: number)
 	local data = colony.Context.Data
-	local site = getSaved(data, "Graveyard") or getSaved(data, "TownHall")
+	local site = getBuilt(data, "Graveyard")
+		or getBuilt(data, "TownHall")
+		or getSaved(data, "Spire")
 	colony.Context.Funeral = {
 		Name = colonist.Name,
 		Until = now + ColonistData.FUNERAL_TIME,
@@ -272,38 +300,38 @@ local function updateColony(colony: Colony, deltaTime: number, now: number)
 	local data = context.Data
 	context.Grid = Navigation.GetGrid(data, context.Grid)
 
-	local townHallPlaced = getSaved(data, "TownHall") ~= nil
-	if townHallPlaced then
-		local day = DayCycle.GetDay(now)
-		if data.LastDay < day then
-			if data.LastDay >= 0 then
-				runDay(colony, day)
-			end
-			data.LastDay = day
+	-- Days pass and colonists arrive from the start, before any building exists
+	local day = DayCycle.GetDay(now)
+	if data.LastDay < day then
+		if data.LastDay >= 0 then
+			runDay(colony, day)
 		end
+		data.LastDay = day
+	end
 
-		-- The first colonists arrive with the Town Hall; more come while there's room
-		if data.NextColonistId == 1 then
-			for _ = 1, Population.STARTING_COLONISTS do
-				Population.Create(data, day, context.Random)
-			end
-			context.Log(`{Population.STARTING_COLONISTS} colonists have arrived`)
+	-- A new colony's first colonists appear at once, standing around the Spire (saves that
+	-- already have colonists have moved NextColonistId past 1, so none are added twice). More
+	-- come while there's room: up to STARTING_COLONISTS without beds, then one per free bed.
+	if data.NextColonistId == 1 then
+		for _ = 1, Population.STARTING_COLONISTS do
+			Population.Create(data, day, context.Random)
+		end
+		context.Log(`{Population.STARTING_COLONISTS} colonists have arrived at the Spire`)
+		Notifications.Send(
+			context.Player,
+			"Join",
+			`{Population.STARTING_COLONISTS} colonists joined {getColonyName(data)}`
+		)
+	elseif now >= colony.NextArrival then
+		colony.NextArrival = now + ColonistData.ARRIVAL_INTERVAL
+		if #data.Colonists < Population.GetCapacity(data) then
+			local colonist = Population.Create(data, day, context.Random)
+			context.Log(`{colonist.Name} has joined the colony`)
 			Notifications.Send(
 				context.Player,
 				"Join",
-				`{Population.STARTING_COLONISTS} colonists joined {getColonyName(data)}`
+				`{colonist.Name} joined {getColonyName(data)}`
 			)
-		elseif now >= colony.NextArrival then
-			colony.NextArrival = now + ColonistData.ARRIVAL_INTERVAL
-			if #data.Colonists < Population.GetCapacity(data) then
-				local colonist = Population.Create(data, day, context.Random)
-				context.Log(`{colonist.Name} has joined the colony`)
-				Notifications.Send(
-					context.Player,
-					"Join",
-					`{colonist.Name} joined {getColonyName(data)}`
-				)
-			end
 		end
 	end
 
@@ -335,6 +363,16 @@ local function updateColony(colony: Colony, deltaTime: number, now: number)
 			agent.TalkingTo = nil
 			Net:RemoteEvent("ColonistTalkEnded")
 				:FireClient(talker, agent.Colonist.Id, `{agent.Colonist.Name} has to go to bed`)
+		end
+	end
+
+	-- Systems stepping with the colonists (raids); one failing doesn't stop the colony's tick
+	for _, hook in stepHooks do
+		local ok, err = pcall(function()
+			hook(context.Player, context, colony.Agents, deltaTime, now)
+		end)
+		if not ok then
+			warn(`[Colonists] {context.Player.Name} step hook: {err}`)
 		end
 	end
 
@@ -528,6 +566,25 @@ end
 
 ColonistController.SyncColonists = syncColonists
 
+-- Runs `hook` every tick for each loaded colony, right after its colonists' AI stepped.
+-- Lets later systems (RaidController) act on the same agents without a require cycle.
+function ColonistController.OnStep(hook: StepHook)
+	table.insert(stepHooks, hook)
+end
+
+-- Kills a colonist through the usual death path (belongings mailed, funeral, Death toast).
+-- Returns false when the player has no such colonist.
+function ColonistController.Kill(player: Player, id: number): boolean
+	local colony = colonies[player]
+	local agent = colony and colony.Agents[id]
+	if not colony or not agent or not Population.Get(colony.Context.Data, id) then
+		return false
+	end
+	agent.Colonist.Health = 0
+	onDeath(colony, agent.Colonist, workspace:GetServerTimeNow())
+	return true
+end
+
 -- Starts a conversation: the colonist stops where it is until EndTalk. Sleeping colonists
 -- must be woken first.
 function ColonistController.StartTalk(player: Player, id: unknown): (boolean, string)
@@ -542,6 +599,8 @@ function ColonistController.StartTalk(player: Player, id: unknown): (boolean, st
 	if mode == "Sleep" then
 		local state = if agent.Motion.Action == "Sleep" then "asleep" else "going to bed"
 		return false, `{agent.Colonist.Name} is {state}. Wake them up first.`
+	elseif mode == "Defend" then
+		return false, `{agent.Colonist.Name} is busy fighting off the raid`
 	elseif mode == "Leave" or mode == "Funeral" then
 		return false, `{agent.Colonist.Name} can't talk right now`
 	end

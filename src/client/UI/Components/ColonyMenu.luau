@@ -7,7 +7,6 @@ const Shared = ReplicatedStorage.Shared
 
 const vide = require(Packages.vide)
 const Net = require(Packages.Net)
-const BuildingData = require(Shared.Buildings.BuildingData)
 const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const ColonistData = require(Shared.Colonist.ColonistData)
 const ColonistTypes = require(Shared.Colonist.ColonistTypes)
@@ -143,9 +142,8 @@ local function StatisticsTab()
 	local housingCapacity = function(): number
 		local capacity = 0
 		for _, saved in ColonyStore.Buildings() do
-			local housing = BuildingData[saved.Id].Components.Housing
-			if saved.Placement and housing and BuildingUnlocks.IsBuilt(saved.Id, saved.Level) then
-				capacity += housing.Capacity + (housing.CapacityPerLevel or 0) * saved.Level
+			if saved.Placement then
+				capacity += BuildingUnlocks.GetBeds(saved.Id, saved.Level)
 			end
 		end
 		return capacity
@@ -191,11 +189,7 @@ local function ColonistsTab()
 		show(function()
 			return #ColonistStore.Colonists() == 0
 		end, function()
-			return line(
-				"No colonists yet. They arrive once the Town Hall is placed.",
-				0,
-				MUTED_COLOR
-			)
+			return line("No colonists yet. The first ones arrive at the Spire.", 0, MUTED_COLOR)
 		end),
 
 		indexes(

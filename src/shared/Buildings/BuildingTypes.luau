@@ -65,10 +65,12 @@ export type StorageComponent = {}
 -- Teleports its owner to the wilds
 export type TeleporterComponent = {}
 
--- Colonists can live here; beds = Capacity + CapacityPerLevel * level
+-- Colonists can live here; beds = Capacity + CapacityPerLevel * level, or CapacityByLevel[level]
+-- when set (levels past its end use the last entry)
 export type HousingComponent = {
 	Capacity: number,
 	CapacityPerLevel: number?,
+	CapacityByLevel: { number }?,
 }
 
 -- The building's own storage (e.g. Builder's Hut materials); the player delivers into it
@@ -81,6 +83,13 @@ export type WorkerStorageComponent = {
 -- plants and harvests it. Only the hut in the middle blocks colonists, the field is walkable.
 export type FieldComponent = {}
 
+-- A yard of resource nodes around the building (YardData: trees, rocks...; more nodes per
+-- level) that its worker harvests and that grow back. Only the hut in the middle blocks colonists.
+export type YardComponent = {
+	-- Yard kind from YardData.YARDS
+	Kind: string,
+}
+
 -- A building is composed of the components it has; absent components are nil
 export type BuildingComponents = {
 	Workplace: WorkplaceComponent?,
@@ -89,6 +98,7 @@ export type BuildingComponents = {
 	Housing: HousingComponent?,
 	WorkerStorage: WorkerStorageComponent?,
 	Field: FieldComponent?,
+	Yard: YardComponent?,
 }
 
 export type BuildingInfo = {

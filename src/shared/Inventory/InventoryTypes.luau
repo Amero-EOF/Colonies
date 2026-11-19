@@ -8,6 +8,8 @@ export type ItemMetadata = {
 	Holdable: boolean?,
 	-- Colonists eat it like Food (e.g. Carrot, Potato)
 	Edible: boolean?,
+	-- Damage per swing against raiders while held (weapons)
+	Damage: number?,
 }
 
 export type BagMetadata = {

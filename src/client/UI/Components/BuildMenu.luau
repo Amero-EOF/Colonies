@@ -84,17 +84,22 @@ local function row(info: () -> BuildingInfo, index: number, onPlace: (BuildingId
 	})
 end
 
--- Build button in the bottom left; its menu lists unlocked buildings the colony doesn't have yet.
--- Later the player will order buildings by talking to the Builder instead.
+-- Build button in the bottom left; its menu lists unlocked buildings the colony doesn't have yet:
+-- only the Builder's Hut at first, then the Town Hall once the hut is built, then the rest by
+-- Town Hall level. Later the player will order buildings by talking to the Builder instead.
 local function BuildMenu(props: Props)
 	local open = source(false)
 	local townHallLevel = attributeSource("TownHallLevel")
-	local townHallPlaced = attributeSource("TownHallPlaced")
+
+	local builderHutLevel = function(): number
+		local builderHut = ColonyStore.GetBuilding("BuilderHut")
+		return if builderHut then builderHut.Level else 0
+	end
 
 	local available = derive(function()
 		local infos: { BuildingInfo } = {}
 		for id, info in BuildingData do
-			local unlocked = BuildingUnlocks.IsUnlocked(id, townHallLevel() or 0)
+			local unlocked = BuildingUnlocks.IsUnlocked(id, townHallLevel() or 0, builderHutLevel())
 			if unlocked and not info.Components.Teleporter and not ColonyStore.GetBuilding(id) then
 				table.insert(infos, info)
 			end
@@ -114,8 +119,9 @@ local function BuildMenu(props: Props)
 		props.OnPlace(id)
 	end
 
+	-- Shown once the colony is named (the name prompt comes first)
 	return show(function()
-		return townHallPlaced() == true
+		return ColonyStore.Loaded() and ColonyStore.Name() ~= nil
 	end, function()
 		return {
 			create("TextButton")({
@@ -201,7 +207,13 @@ local function BuildMenu(props: Props)
 								TextColor3 = MUTED_COLOR,
 								TextWrapped = true,
 								TextSize = 16,
-								Text = "Nothing new to build. Upgrade the Town Hall to unlock more buildings.",
+								Text = function()
+									local townHall = ColonyStore.GetBuilding("TownHall")
+									if not townHall or townHall.Level < 1 then
+										return "Nothing new to build. Finish the Builder's Hut, then the Town Hall."
+									end
+									return "Nothing new to build. Upgrade the Town Hall to unlock more buildings."
+								end,
 							})
 						end),
 

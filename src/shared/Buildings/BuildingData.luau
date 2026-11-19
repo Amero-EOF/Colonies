@@ -231,6 +231,8 @@ const BuildingData: { [BuildingId]: BuildingInfo } = {
 		UnlockLevel = 1,
 		Components = {
 			Workplace = { Jobs = { "Forester" } },
+			WorkerStorage = { BagItem = "ForesterHutStorage" },
+			Yard = { Kind = "Trees" },
 		},
 	},
 	Gatehouse = {
@@ -299,10 +301,12 @@ const BuildingData: { [BuildingId]: BuildingInfo } = {
 	Mine = {
 		Id = "Mine",
 		Name = "Mine",
-		Description = "Where the Miner digs for ores.",
+		Description = "Where the Miner digs for stone and ore.",
 		UnlockLevel = 2,
 		Components = {
 			Workplace = { Jobs = { "Miner" } },
+			WorkerStorage = { BagItem = "MineStorage" },
+			Yard = { Kind = "Rocks" },
 		},
 	},
 	MysticalSite = {
@@ -450,7 +454,7 @@ const BuildingData: { [BuildingId]: BuildingInfo } = {
 		Name = "Town Hall",
 		Description = "The central building of the colony.",
 		UnlockLevel = 0,
-		Components = { Storage = {}, Housing = { Capacity = 3 } },
+		Components = { Storage = {}, Housing = { Capacity = 3, CapacityByLevel = { 3, 3, 4 } } },
 	},
 	University = {
 		Id = "University",

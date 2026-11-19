@@ -210,7 +210,7 @@ local function getHomeChoices(colonist: Colonist): string
 		then
 			continue
 		end
-		local beds = housing.Capacity + (housing.CapacityPerLevel or 0) * saved.Level
+		local beds = BuildingUnlocks.GetBeds(saved.Id, saved.Level)
 		if beds <= 0 then
 			continue
 		end

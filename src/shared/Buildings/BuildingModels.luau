@@ -5,6 +5,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const BuildingData = require(script.Parent.BuildingData)
 const BuildingTypes = require(script.Parent.BuildingTypes)
 const FarmData = require(script.Parent.Parent.Farm.FarmData)
+const YardData = require(script.Parent.Parent.Yard.YardData)
 
 type BuildingId = BuildingTypes.BuildingId
 
@@ -52,7 +53,14 @@ const FIELD_SOIL_COLOR = Color3.fromRGB(95, 65, 40)
 const FIELD_SOIL_BANDS = 6
 const FIELD_MATERIAL = "Soil"
 
-local function addPart(model: Model, name: string, size: Vector3, position: Vector3, color: Color3, material: Enum.Material): Part
+local function addPart(
+	model: Model,
+	name: string,
+	size: Vector3,
+	position: Vector3,
+	color: Color3,
+	material: Enum.Material
+): Part
 	local part = Instance.new("Part")
 	part.Name = name
 	part.Anchored = true
@@ -111,6 +119,22 @@ local function addFieldBase(model: Model)
 	end
 end
 
+-- Flat ground under a resource yard (YardData geometry): a disc of YARD_RADIUS the nodes stand
+-- on. Costs no materials, like the field.
+local function addYardBase(model: Model, info: YardData.YardInfo)
+	local base = addPart(
+		model,
+		"YardBase",
+		Vector3.new(YardData.GROUND_HEIGHT, YardData.YARD_RADIUS * 2, YardData.YARD_RADIUS * 2),
+		Vector3.new(0, YardData.GROUND_HEIGHT / 2, 0),
+		info.GroundColor,
+		info.GroundMaterial
+	)
+	base.Shape = Enum.PartType.Cylinder
+	base.CFrame = CFrame.new(0, YardData.GROUND_HEIGHT / 2, 0) * CFrame.Angles(0, 0, math.pi / 2)
+	base:SetAttribute("BuildMaterial", FIELD_MATERIAL)
+end
+
 -- A placeholder made of many parts (floor, wall rows, roof) so Builders can raise it bottom-up.
 -- Stone: floor, bottom wall row, pillar blocks. Wood: upper wall rows and roof.
 -- Buildings with a Field component stand in the middle of a flat crop field.
@@ -124,6 +148,11 @@ local function createPlaceholder(id: BuildingId, level: number): Model
 	local labelPart: BasePart
 	if BuildingData[id].Components.Field then
 		addFieldBase(model)
+	end
+	local yard = BuildingData[id].Components.Yard
+	local yardInfo = yard and YardData.GetInfo(yard.Kind)
+	if yardInfo then
+		addYardBase(model, yardInfo)
 	end
 
 	if math.max(width, depth) <= PILLAR_SIZE then
@@ -158,10 +187,38 @@ local function createPlaceholder(id: BuildingId, level: number): Model
 			local color = if isStone then stoneColor else style.Color
 			local material = if isStone then Enum.Material.Cobblestone else Enum.Material.WoodPlanks
 			local innerDepth = depth - WALL_THICKNESS * 2
-			addPart(model, `WallN{row}`, Vector3.new(width, rowHeight, WALL_THICKNESS), Vector3.new(0, y, -(depth - WALL_THICKNESS) / 2), color, material)
-			addPart(model, `WallS{row}`, Vector3.new(width, rowHeight, WALL_THICKNESS), Vector3.new(0, y, (depth - WALL_THICKNESS) / 2), color, material)
-			addPart(model, `WallW{row}`, Vector3.new(WALL_THICKNESS, rowHeight, innerDepth), Vector3.new(-(width - WALL_THICKNESS) / 2, y, 0), color, material)
-			addPart(model, `WallE{row}`, Vector3.new(WALL_THICKNESS, rowHeight, innerDepth), Vector3.new((width - WALL_THICKNESS) / 2, y, 0), color, material)
+			addPart(
+				model,
+				`WallN{row}`,
+				Vector3.new(width, rowHeight, WALL_THICKNESS),
+				Vector3.new(0, y, -(depth - WALL_THICKNESS) / 2),
+				color,
+				material
+			)
+			addPart(
+				model,
+				`WallS{row}`,
+				Vector3.new(width, rowHeight, WALL_THICKNESS),
+				Vector3.new(0, y, (depth - WALL_THICKNESS) / 2),
+				color,
+				material
+			)
+			addPart(
+				model,
+				`WallW{row}`,
+				Vector3.new(WALL_THICKNESS, rowHeight, innerDepth),
+				Vector3.new(-(width - WALL_THICKNESS) / 2, y, 0),
+				color,
+				material
+			)
+			addPart(
+				model,
+				`WallE{row}`,
+				Vector3.new(WALL_THICKNESS, rowHeight, innerDepth),
+				Vector3.new((width - WALL_THICKNESS) / 2, y, 0),
+				color,
+				material
+			)
 		end
 
 		addPart(
@@ -196,8 +253,9 @@ local function createPlaceholder(id: BuildingId, level: number): Model
 end
 
 -- Returns an unparented clone of ReplicatedStorage.BuildingModels.<Id>.Level<N>
--- (its pivot must be at the base centre), falling back to the highest lower level that has a model,
--- or a labelled placeholder block. Level 0 draws level 1.
+-- (its pivot must be at the base centre; see GetLayoutOrigin for levels that grow off-centre),
+-- falling back to the highest lower level that has a model, or a labelled placeholder block.
+-- Level 0 draws level 1.
 function BuildingModels.Create(id: BuildingId, level: number): Model
 	level = math.max(level, 1)
 	local folder = ReplicatedStorage:FindFirstChild("BuildingModels")
@@ -221,6 +279,14 @@ function BuildingModels.Create(id: BuildingId, level: number): Model
 	return model
 end
 
+-- True when ReplicatedStorage.BuildingModels.<Id>.Level<N> exists (not a fallback or placeholder)
+function BuildingModels.HasModel(id: BuildingId, level: number): boolean
+	local folder = ReplicatedStorage:FindFirstChild("BuildingModels")
+	local levels = folder and folder:FindFirstChild(id)
+	local template = levels and levels:FindFirstChild(`Level{level}`)
+	return template ~= nil and template:IsA("Model")
+end
+
 -- Unrotated X/Z size of the model, cached per id and level. Unbuilt sites (level 0) use level 1.
 function BuildingModels.GetFootprint(id: BuildingId, level: number): Vector2
 	level = math.max(level, 1)
@@ -237,6 +303,40 @@ function BuildingModels.GetFootprint(id: BuildingId, level: number): Vector2
 	local footprint = Vector2.new(size.X, size.Z)
 	footprints[key] = footprint
 	return footprint
+end
+
+-- Levels of one building can have different base centres (a Town Hall that grows to one side).
+-- A level model's optional LayoutOrigin attribute (Vector3, relative to its pivot) marks a point
+-- that stays put across levels: parts shared by two levels sit at the same spot relative to it.
+function BuildingModels.GetLayoutOrigin(model: Model): Vector3
+	local origin = model:GetAttribute("LayoutOrigin")
+	return if typeof(origin) == "Vector3" then origin else Vector3.zero
+end
+
+-- The model's layout frame: its pivot moved to LayoutOrigin. Compare parts across levels in it.
+function BuildingModels.GetLayoutFrame(model: Model): CFrame
+	return model:GetPivot() * CFrame.new(BuildingModels.GetLayoutOrigin(model))
+end
+
+const layoutOrigins: { [string]: Vector3 } = {}
+
+-- Where the pivot (base centre) of level `toLevel` sits relative to the pivot of `fromLevel`, so
+-- the two levels' shared parts line up. Zero when the levels share a base centre.
+function BuildingModels.GetLevelOffset(id: BuildingId, fromLevel: number, toLevel: number): Vector3
+	local function getOrigin(level: number): Vector3
+		level = math.max(level, 1)
+		local key = `{id}_{level}`
+		local cached = layoutOrigins[key]
+		if cached then
+			return cached
+		end
+		local model = BuildingModels.Create(id, level)
+		local origin = BuildingModels.GetLayoutOrigin(model)
+		model:Destroy()
+		layoutOrigins[key] = origin
+		return origin
+	end
+	return getOrigin(fromLevel) - getOrigin(toLevel)
 end
 
 return BuildingModels

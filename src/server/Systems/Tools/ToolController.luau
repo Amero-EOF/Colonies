@@ -126,6 +126,26 @@ local function createItemTool(itemType: string, name: string): Tool
 				rod.Shape = Enum.PartType.Cylinder
 				weld(handle, rod)
 			end
+		elseif itemType == "Sword" then
+			-- Short grip, a crossguard and a long blade above it
+			local handle =
+				addPart(tool, "Handle", Vector3.new(0.3, 1.2, 0.3), HANDLE_COLOR, CFrame.new())
+			local guard = addPart(
+				tool,
+				"Guard",
+				Vector3.new(0.3, 0.25, 1.3),
+				HEAD_COLOR,
+				handle.CFrame * CFrame.new(0, 0.7, 0)
+			)
+			local blade = addPart(
+				tool,
+				"Blade",
+				Vector3.new(0.15, 3.2, 0.5),
+				HEAD_COLOR,
+				handle.CFrame * CFrame.new(0, 2.4, 0)
+			)
+			weld(handle, guard)
+			weld(handle, blade)
 		else
 			-- Long wooden shaft with a flat metal blade
 			local handle =

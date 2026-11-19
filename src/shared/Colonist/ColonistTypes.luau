@@ -11,7 +11,7 @@ export type Debuff = "Fight" | "Flight"
 export type Fate = "Died" | "Left"
 
 -- What the colonist does once it reaches the end of its path
-export type Action = "Idle" | "Sleep" | "Build" | "Mourn" | "Eat" | "Work"
+export type Action = "Idle" | "Sleep" | "Build" | "Mourn" | "Eat" | "Work" | "Attack"
 
 export type QuestState = "Pending" | "Accepted"
 

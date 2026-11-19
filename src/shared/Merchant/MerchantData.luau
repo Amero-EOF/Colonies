@@ -46,6 +46,12 @@ const OFFERS: { Offer } = {
 		Price = {},
 	},
 	{
+		Id = "Sword",
+		ItemType = "Sword",
+		Description = "Hold it and click raiders to strike them down. Hits harder than your tools.",
+		Price = {},
+	},
+	{
 		Id = "WheatSeeds",
 		ItemType = "WheatSeeds",
 		Quantity = 8,
@@ -116,12 +122,12 @@ function MerchantData.GetLatestArrival(scheduled: number, now: number): number
 end
 
 -- World CFrame where the merchant stands (facing out of the Town Hall's front), beside
--- the Town Hall on the first side clear of other buildings. nil until the Town Hall is placed.
+-- the Town Hall on the first side clear of other buildings. nil until the Town Hall is built.
 -- Shared so the client draws him where the server checks the player's reach.
 function MerchantData.GetSpot(buildings: { SavedBuilding }): CFrame?
 	local townHall: SavedBuilding? = nil
 	for _, saved in buildings do
-		if saved.Id == "TownHall" then
+		if saved.Id == "TownHall" and saved.Level >= 1 then
 			townHall = saved
 		end
 	end

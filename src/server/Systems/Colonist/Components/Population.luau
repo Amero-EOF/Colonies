@@ -236,11 +236,10 @@ end
 
 -- Beds a built building offers
 function Population.GetBeds(saved: ColonyTypes.SavedBuilding): number
-	local housing = BuildingData[saved.Id].Components.Housing
-	if not housing or not BuildingUnlocks.IsBuilt(saved.Id, saved.Level) or not saved.Placement then
+	if not saved.Placement then
 		return 0
 	end
-	return housing.Capacity + (housing.CapacityPerLevel or 0) * saved.Level
+	return BuildingUnlocks.GetBeds(saved.Id, saved.Level)
 end
 
 function Population.GetTotalBeds(data: ColonyData): number

@@ -44,6 +44,7 @@ const SKIN_COLORS = {
 }
 const JOB_COLORS: { [string]: Color3 } = {
 	Builder = Color3.fromRGB(214, 160, 60),
+	Guard = Color3.fromRGB(70, 85, 150),
 }
 const SHIRT_COLOR = Color3.fromRGB(120, 140, 170)
 const CHILD_SCALE = 0.7
@@ -204,6 +205,10 @@ local function getPose(
 		return 0, bite, 0, 0, 0
 	elseif action == "Mourn" then
 		return math.rad(-20), math.rad(-20), 0, 0, math.rad(-35)
+	elseif action == "Attack" then
+		-- Winds up overhead and strikes down (Guards fighting raiders)
+		local strike = -math.rad(150) + math.abs(math.sin(t * 5)) * math.rad(110)
+		return math.rad(-15), strike, 0, 0, 0
 	end
 	local breathe = math.sin(t * 1.5) * math.rad(3)
 	return breathe, -breathe, 0, 0, 0

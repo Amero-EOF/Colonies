@@ -4,6 +4,7 @@ const Shared = script.Parent.Parent
 
 const BuildingModels = require(Shared.Buildings.BuildingModels)
 const BuildingPlacement = require(Shared.Buildings.BuildingPlacement)
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
 const ItemsList = require(Shared.Inventory.ItemsList)
 
@@ -39,11 +40,13 @@ function MailboxData.GetCFrame(townHallPivot: CFrame, footprint: Vector2): CFram
 	return townHallPivot * CFrame.new(side, 0, -front)
 end
 
--- The placed Town Hall's mailbox, or nil until the Town Hall is placed
+-- The mailbox: beside the built Town Hall, or beside the Spire until the Town Hall is built
+-- (BuildingUnlocks.GetHubId), so mail sent early can still be collected
 function MailboxData.Find(buildings: { SavedBuilding }): CFrame?
+	local hubId = BuildingUnlocks.GetHubId(buildings)
 	for _, saved in buildings do
 		local placement = saved.Placement
-		if saved.Id == "TownHall" and placement then
+		if saved.Id == hubId and placement then
 			return MailboxData.GetCFrame(
 				BuildingPlacement.ToCFrame(placement),
 				BuildingModels.GetFootprint(saved.Id, saved.Level)

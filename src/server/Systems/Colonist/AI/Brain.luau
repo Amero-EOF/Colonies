@@ -5,6 +5,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const Shared = ReplicatedStorage.Shared
 const Systems = script.Parent.Parent.Parent
 
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const ColonistData = require(Shared.Colonist.ColonistData)
 const DayCycle = require(Shared.Time.DayCycle)
 const InventoryTypes = require(Shared.Inventory.InventoryTypes)
@@ -12,6 +13,7 @@ const ItemsList = require(Shared.Inventory.ItemsList)
 const BehaviorTree = require(script.Parent.BehaviorTree5)
 const Agent = require(script.Parent.Agent)
 const Jobs = require(script.Parent.Jobs)
+const Guard = require(script.Parent.Jobs.Guard)
 const Tasks = require(script.Parent.Tasks)
 const Navigation = require(script.Parent.Parent.Components.Navigation)
 const Population = require(script.Parent.Parent.Components.Population)
@@ -20,7 +22,7 @@ const Mailbox = require(Systems.Colony.Components.Mailbox)
 
 type Agent = Agent.Agent
 
-export type Mode = "Leave" | "Funeral" | "Sleep" | "Talk" | "Eat" | "Work" | "Wander"
+export type Mode = "Leave" | "Defend" | "Funeral" | "Sleep" | "Talk" | "Eat" | "Work" | "Wander"
 
 const WANDER_RADIUS = 40
 const FUNERAL_RADIUS = 8
@@ -49,7 +51,7 @@ local function hasOwnFood(agent: Agent): boolean
 end
 
 local function hasStoredFood(agent: Agent): boolean
-	return countFood(agent.Context.Data.Storage) > 0 and Tasks.GetBuilding(agent, "TownHall") ~= nil
+	return countFood(agent.Context.Data.Storage) > 0 and Tasks.HubSpot(agent) ~= nil
 end
 
 function Brain.GetMode(agent: Agent, now: number): Mode
@@ -58,6 +60,11 @@ function Brain.GetMode(agent: Agent, now: number): Mode
 
 	if colonist.Leaving then
 		return "Leave"
+	end
+	-- Guards fight while raiders are on the plot: before sleep, and before a funeral too, or the
+	-- first colonist a raid kills would pull every Guard out of the fight
+	if Guard.IsDefending(agent) then
+		return "Defend"
 	end
 	local funeral = context.Funeral
 	if funeral and now < funeral.Until then
@@ -88,12 +95,22 @@ end
 
 -------- Targets --------
 
--- Its home's door (several colonists spread along it), or the Town Hall when homeless
+-- Its own Bed attachment in its home, else its home's door (several colonists spread along
+-- it). Homeless colonists sleep at the Town Hall, or outside around the Spire before the Town
+-- Hall is built.
 local function bedSpot(agent: Agent): (Vector3?, Vector3?)
 	local colonist = agent.Colonist
+	local home = Tasks.GetBuilding(agent, colonist.Home)
+	if home and Navigation.GetSpot(home, "Bed") then
+		return Tasks.SpotOf(agent, colonist.Home, "Bed", "Home")
+	end
 	local door, centre = Tasks.DoorOf(agent, colonist.Home)
 	if not door then
-		door, centre = Tasks.DoorOf(agent, "TownHall")
+		door, centre = Tasks.HubSpot(agent)
+		if door and not BuildingUnlocks.IsTownHallBuilt(agent.Context.Data.Buildings) then
+			-- Already a spot of its own on the ring
+			return door, centre
+		end
 	end
 	if not door then
 		return nil, nil
@@ -113,13 +130,14 @@ local function funeralSpot(agent: Agent): (Vector3?, Vector3?)
 	return Navigation.Snap(agent.Context.Grid, spot), funeral.Position
 end
 
-local function townHallDoor(agent: Agent): (Vector3?, Vector3?)
-	return Tasks.DoorOf(agent, "TownHall")
+-- Where stored food is eaten: the Town Hall, or the Spire before it's built
+local function hubSpot(agent: Agent): (Vector3?, Vector3?)
+	return Tasks.HubSpot(agent)
 end
 
 local function wanderSpot(agent: Agent, now: number): (Vector3?, Vector3?)
-	local townHall = Tasks.GetBuilding(agent, "TownHall")
-	local centre = (townHall and Navigation.GetCentre(townHall)) or Vector3.zero
+	local hub = Tasks.GetBuilding(agent, BuildingUnlocks.GetHubId(agent.Context.Data.Buildings))
+	local centre = (hub and Navigation.GetCentre(hub)) or Vector3.zero
 	return Navigation.GetRandomPoint(
 		agent.Context.Grid,
 		centre,
@@ -202,6 +220,12 @@ local function build()
 			}),
 			BehaviorTree.Sequence({
 				nodes = {
+					Tasks.Is("Mode", "Defend"),
+					Guard.DefendNode(),
+				},
+			}),
+			BehaviorTree.Sequence({
+				nodes = {
 					Tasks.Is("Mode", "Funeral"),
 					Tasks.MoveTo(funeralSpot, "Going to a funeral"),
 					Tasks.Hold("Mourn", function(agent: Agent)
@@ -243,7 +267,7 @@ local function build()
 							}),
 							BehaviorTree.Sequence({
 								nodes = {
-									Tasks.MoveTo(townHallDoor, "Going to eat"),
+									Tasks.MoveTo(hubSpot, "Going to eat"),
 									Tasks.Wait(
 										ColonistData.EAT_TIME,
 										ColonistData.EAT_TIME,

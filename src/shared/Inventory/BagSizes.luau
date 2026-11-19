@@ -7,6 +7,8 @@ const bagSizes: { [string]: number } = {
 	ColonistPack = 5,
 	BuilderHutStorage = 30,
 	FarmerHutStorage = 30,
+	ForesterHutStorage = 30,
+	MineStorage = 30,
 }
 
 return bagSizes

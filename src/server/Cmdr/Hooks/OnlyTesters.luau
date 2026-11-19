@@ -1,15 +1,13 @@
 --!strict
 
-const RunService = game:GetService("RunService")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Testing commands run in Studio, or for the game's owner in live servers
+const DevAccess = require(ReplicatedStorage.Shared.Dev.DevAccess)
+
+-- Testing commands run in Studio, or for the game's owner in live servers (DevAccess)
 return function(registry: any)
 	registry:RegisterHook("BeforeRun", function(context: any): string?
-		if RunService:IsStudio() then
-			return nil
-		end
-		local executor: Player? = context.Executor
-		if executor and (executor.UserId == game.CreatorId) then
+		if DevAccess.IsTester(context.Executor) then
 			return nil
 		end
 		return "You don't have permission to run this command."

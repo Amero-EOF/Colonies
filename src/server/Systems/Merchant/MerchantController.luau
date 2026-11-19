@@ -8,6 +8,7 @@ const Packages = ReplicatedStorage.Packages
 const Systems = script.Parent.Parent
 
 const Net = require(Packages.Net)
+const BuildingUnlocks = require(Shared.Buildings.BuildingUnlocks)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
 const ItemsList = require(Shared.Inventory.ItemsList)
 const MerchantData = require(Shared.Merchant.MerchantData)
@@ -45,13 +46,9 @@ local function getVisit(data: ColonyData): MerchantVisit
 	return visit
 end
 
+-- The merchant (and his visits) wait for a built Town Hall, not just its construction site
 local function isTownHallPlaced(data: ColonyData): boolean
-	for _, saved in data.Buildings do
-		if saved.Id == "TownHall" then
-			return saved.Placement ~= nil
-		end
-	end
-	return false
+	return BuildingUnlocks.IsTownHallBuilt(data.Buildings)
 end
 
 local function setAttribute(player: Player, visit: MerchantVisit)

@@ -97,7 +97,7 @@ function Needs.Update(data: ColonyData, colonist: Colonist, deltaTime: number, n
 	end
 	colonist.Saturation = math.max(colonist.Saturation - drainPerSecond * deltaTime, 0)
 
-	local hours = deltaTime / DayCycle.HOUR_LENGTH
+	local hours = DayCycle.HoursBetween(now - deltaTime, now)
 	if colonist.Saturation <= 0 then
 		-- Starving
 		colonist.Health -= ColonistData.HEAL_PER_HOUR * hours

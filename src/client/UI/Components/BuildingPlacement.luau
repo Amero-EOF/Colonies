@@ -24,10 +24,7 @@ const cleanup = vide.cleanup
 type BuildingId = BuildingTypes.BuildingId
 type Placement = ColonyTypes.Placement
 
-type Obstacle = {
-	Placement: Placement,
-	Footprint: Vector2,
-}
+type Obstacle = BuildingPlacement.Obstacle
 
 type Props = {
 	Id: BuildingId,
@@ -43,6 +40,9 @@ const GHOST_TRANSPARENCY = 0.5
 const SPRING_PERIOD = 0.2
 const RAY_LENGTH = 5000
 const BLOCKED_COLOR = Color3.fromRGB(255, 60, 60)
+const REACH_COLOR = Color3.fromRGB(255, 255, 255)
+const REACH_HEIGHT = 0.2
+const REACH_LIFT = 0.15
 
 -- Makes a model's parts see-through locally and returns a function that restores them
 local function ghostify(model: Model): () -> ()
@@ -65,7 +65,8 @@ end
 local function BuildingPlacementGhost(props: Props)
 	local plot = workspace:WaitForChild("MyColony"):WaitForChild("Plot") :: BasePart
 	local plotSize = props.PlotSize
-	local footprint = BuildingModels.GetFootprint(props.Id, props.Level)
+	-- The ground the building can ever grow into: placing keeps all of it free
+	local reachSize, reachCentre = BuildingPlacement.GetReach(props.Id, props.Level)
 	local original = props.Original
 
 	local ghost = BuildingModels.Create(props.Id, props.Level)
@@ -90,29 +91,55 @@ local function BuildingPlacementGhost(props: Props)
 	end
 	ghost.Parent = workspace
 
-	local placement = source(BuildingPlacement.Resolve(plotSize, footprint, startX, startZ, rotation))
+	local placement = source(
+		BuildingPlacement.Resolve(plotSize, reachSize, startX, startZ, rotation, reachCentre)
+	)
 	local busy = false
 
 	-- Other buildings on the plot the preview can't overlap
-	local obstacles: { Obstacle } = {}
-	for _, saved in ColonyStore.Buildings() do
-		if saved.Id ~= props.Id and saved.Placement then
-			table.insert(obstacles, {
-				Placement = saved.Placement,
-				Footprint = BuildingModels.GetFootprint(saved.Id, saved.Level),
-			})
-		end
-	end
+	-- (including the ground their ordered upgrades will grow into)
+	-- (and the ground they could grow into at their biggest level)
+	local obstacles: { Obstacle } = BuildingPlacement.GetObstacles(
+		ColonyStore.Buildings(),
+		ColonyStore.WorkOrders(),
+		props.Id,
+		true
+	)
 
 	local blocked = function(): boolean
-		local current = placement()
+		local current = BuildingPlacement.GetReachPlacement(props.Id, props.Level, placement())
 		for _, obstacle in obstacles do
-			if BuildingPlacement.Overlaps(current, footprint, obstacle.Placement, obstacle.Footprint) then
+			if
+				BuildingPlacement.Overlaps(
+					current,
+					reachSize,
+					obstacle.Placement,
+					obstacle.Footprint
+				)
+			then
 				return true
 			end
 		end
 		return false
 	end
+
+	-- Flat box outlining the building's full reach on the ground
+	local reach = Instance.new("Part")
+	reach.Name = "PlacementReach"
+	reach.Anchored = true
+	reach.CanCollide = false
+	reach.CanQuery = false
+	reach.CanTouch = false
+	reach.CastShadow = false
+	reach.Transparency = 1
+	reach.Size = Vector3.new(reachSize.X, REACH_HEIGHT, reachSize.Y)
+	reach.Parent = workspace
+
+	local outline = Instance.new("SelectionBox")
+	outline.Adornee = reach
+	outline.LineThickness = 0.15
+	outline.SurfaceTransparency = 0.85
+	outline.Parent = reach
 
 	local highlight = Instance.new("Highlight")
 	highlight.FillColor = BLOCKED_COLOR
@@ -121,7 +148,10 @@ local function BuildingPlacementGhost(props: Props)
 	highlight.Parent = ghost
 
 	effect(function()
-		highlight.Enabled = blocked()
+		local isBlocked = blocked()
+		highlight.Enabled = isBlocked
+		outline.Color3 = if isBlocked then BLOCKED_COLOR else REACH_COLOR
+		outline.SurfaceColor3 = outline.Color3
 	end)
 
 	-- Position and yaw spring separately: springing a whole CFrame goes through Euler XYZ
@@ -136,7 +166,13 @@ local function BuildingPlacementGhost(props: Props)
 	ghost:PivotTo(BuildingPlacement.ToCFrame(placement()))
 
 	effect(function()
-		ghost:PivotTo(CFrame.new(animatedPosition()) * PlotData.SURFACE.Rotation * CFrame.Angles(0, animatedYaw(), 0))
+		ghost:PivotTo(
+			CFrame.new(animatedPosition())
+				* PlotData.SURFACE.Rotation
+				* CFrame.Angles(0, animatedYaw(), 0)
+		)
+		reach.CFrame = ghost:GetPivot()
+			* CFrame.new(reachCentre.X, REACH_HEIGHT / 2 + REACH_LIFT, reachCentre.Z)
 	end)
 
 	local raycastParams = RaycastParams.new()
@@ -153,9 +189,20 @@ local function BuildingPlacementGhost(props: Props)
 		end
 
 		local localPosition = PlotData.SURFACE:PointToObjectSpace(result.Position)
-		local resolved = BuildingPlacement.Resolve(plotSize, footprint, localPosition.X, localPosition.Z, rotation)
+		local resolved = BuildingPlacement.Resolve(
+			plotSize,
+			reachSize,
+			localPosition.X,
+			localPosition.Z,
+			rotation,
+			reachCentre
+		)
 		local current = placement()
-		if resolved.X ~= current.X or resolved.Z ~= current.Z or resolved.Rotation ~= current.Rotation then
+		if
+			resolved.X ~= current.X
+			or resolved.Z ~= current.Z
+			or resolved.Rotation ~= current.Rotation
+		then
 			placement(resolved)
 		end
 	end
@@ -168,7 +215,8 @@ local function BuildingPlacementGhost(props: Props)
 
 		local chosen = placement()
 		task.spawn(function()
-			local placed = Net:Invoke("PlaceBuilding", props.Id, chosen.X, chosen.Z, chosen.Rotation)
+			local placed =
+				Net:Invoke("PlaceBuilding", props.Id, chosen.X, chosen.Z, chosen.Rotation)
 			busy = false
 			if placed then
 				props.OnPlaced()
@@ -198,6 +246,7 @@ local function BuildingPlacementGhost(props: Props)
 			connection:Disconnect()
 		end
 		ghost:Destroy()
+		reach:Destroy()
 		if restoreOriginal then
 			restoreOriginal()
 		end

@@ -12,6 +12,7 @@ const BuildingTypes = require(Shared.Buildings.BuildingTypes)
 const ColonyTypes = require(Shared.Colony.ColonyTypes)
 const FarmData = require(Shared.Farm.FarmData)
 const InventoryTypes = require(Shared.Inventory.InventoryTypes)
+const YardData = require(Shared.Yard.YardData)
 
 const source = vide.source
 
@@ -26,6 +27,7 @@ export type ColonyState = {
 	Storage: InventoryTypes.Bag,
 	HutStorage: { [string]: InventoryTypes.Bag },
 	Fields: { [string]: { FarmData.Plot } }?,
+	Yards: { [string]: { YardData.Node } }?,
 	Mail: { ColonyTypes.Mail }?,
 }
 
@@ -45,6 +47,9 @@ const ColonyStore = {
 	-- Crop fields (Farmer's Hut), by building id; index = wedge. Growth is computed from
 	-- each plot's PlantedAt with workspace:GetServerTimeNow() (FarmData.GetStage)
 	Fields = source({} :: { [string]: { FarmData.Plot } }),
+	-- Resource yards (Forester's Hut, Mine), by building id; index = node. Regrowth is computed
+	-- from each node's HarvestedAt with workspace:GetServerTimeNow() (YardData.GetStage)
+	Yards = source({} :: { [string]: { YardData.Node } }),
 	-- Town Hall mailbox letters, oldest first
 	Mail = source({} :: { ColonyTypes.Mail }),
 	MailboxOpen = source(false),
@@ -62,6 +67,7 @@ const ColonyStore = {
 
 local lastBuildings = ""
 local lastFields = ""
+local lastYards = ""
 local started = false
 
 local function apply(state: ColonyState?)
@@ -88,6 +94,13 @@ local function apply(state: ColonyState?)
 	if encodedFields ~= lastFields then
 		lastFields = encodedFields
 		ColonyStore.Fields(fields)
+	end
+	-- Yards only change when a node is worked
+	local yards = state.Yards or {}
+	local encodedYards = HttpService:JSONEncode(yards)
+	if encodedYards ~= lastYards then
+		lastYards = encodedYards
+		ColonyStore.Yards(yards)
 	end
 	ColonyStore.Mail(state.Mail or {})
 	ColonyStore.Loaded(true)
